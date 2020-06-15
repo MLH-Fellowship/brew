@@ -35,7 +35,7 @@ module GitHub
       uri = URI(uri_string)
       req = Net::HTTP::Get.new(uri)
       req['Accept'] = 'application/vnd.github.v3+json'
-      req['Authorization'] = "token e7754cf8f02a14c6225b0b273d9cf644152ee0ab"
+      req['Authorization'] = "token "
 
       res = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => true) { |http|
         http.request(req)
@@ -53,7 +53,7 @@ module GitHub
 
         # sleeping 1 second per API call should be enough to avoid rate-limiting issues
         # (3600 seconds / hour) * (hour / 5000 requests) < 1 second / request
-        sleep 0.1
+        sleep 1
       end
     end
 
@@ -86,29 +86,43 @@ module Homebrew
       line.split(",")[0].chomp
     end)
 
-    # all_considered_formula = %w[openssl readline python sqlite gettext glib icu4c xz gdbm pcre git libidn2 libevent
-    # unbound libtiff gnutls libffi webp jpeg freetype llvm flake ocamlbuild libsecret flake8 gibo zabbix optipng lldpd
-    # ettercap pius opencv youtube-dl pdf2json kumactl ttygif]
-    #                              .map do
-    # |name|
-    #   Formulary.resolve(name)
-    # end.to_a
+    all_considered_formula = Formula.to_a
 
-    all_considered_formula = Formula.to_a.shuffle.slice(0, 10)
+    stat_processed = 0
+    stat_start = Time.now
+    stat_total = all_considered_formula.count
+    stat_non_tar = 0
 
     all_considered_formula.sort { |f, g| f.name <=> g.name }.each do |f|
       if already_processed.include? f.name
-        ohai "Skipping #{f}"
+        oh1 "Skipping #{f}"
+        stat_total -= 1
+
+      elsif f.disabled?
+        oh1 "Skipping #{f} because it has been disabled"
+
+        write_report(report_file, f, nil, "disabled")
+
+        stat_total -= 1
+
+      elsif !f.stable.url.end_with? "tar.gz"
+        oh1 "Skipping #{f} because it is a non-tar file"
+
+        write_report(report_file, f, nil, "non-tar")
+
+        stat_total -= 1
+        stat_non_tar += 1
+
       elsif (github_repo = match_github_repo f)
-        ohai "Fetching GitHub license for #{f}"
+        oh1 "Fetching GitHub license for #{f}"
 
         github_repo.fetch_license
-        report_file.write "#{github_repo.formula_name}, "\
-          "#{github_repo.license&.spdx_id || ""}, "\
-          "true\n"
+        write_report(report_file, f, github_repo.license, "github")
+
+        stat_processed += 1
 
       else
-        ohai "Fetching license manually for #{f}"
+        oh1 "Fetching license manually for #{f}"
 
         fi = FormulaInstaller.new(f)
         fi.ignore_deps = true
@@ -118,60 +132,30 @@ module Homebrew
 
         path = "#{File.dirname(targz_path)}/#{f.name}/#{f.version}/"
         license = Licensee.license path
-        report_file.write "#{f.name}, #{license&.spdx_id || ""}, false\n"
-        report_file.flush
+        write_report(report_file, f, license, "")
 
-        system("rm #{targz_path}")
-        system("rm -rf #{File.dirname(targz_path)}/#{f.name}")
+        # system("rm #{targz_path}")
+        # system("rm -rf #{File.dirname(targz_path)}/#{f.name}")
+
+        stat_processed += 1
+      end
+
+      if stat_processed != 0
+        linear_eta = stat_start + stat_total.to_f / stat_processed.to_f * (Time.now - stat_start)
+        puts "#{stat_processed} / #{stat_total}, "\
+          "eta: #{(linear_eta - Time.now).to_i}s, "\
+          "time passed: #{(Time.now - stat_start).to_i }s"
       end
     end
 
     report_file.close
 
-    # all_considered_formula.each do |f|
-    #   found_github = f.stable.url.match %r{https?://github\.com/(downloads/)?(?<user>[^/]+)/(?<repo>[^/]+)/?.*} do
-    #   |match_data|
-    #     user = match_data[:user]
-    #     repo = match_data[:repo].delete_suffix(".git")
-    #     github_repos << GitHub::Repo.new("#{user}/#{repo}", formula_name: f.name)
-    #   end
-    #
-    #   non_github_formulae << f unless found_github
-    # end
-    #
-    # github_repos.each do |repo|
-    #   repo.fetch_license
-    #   if repo.license
-    #   else
-    #     report_file.write "#{repo.formula_name}, \n"
-    #   end
-    #   report_file.flush
-    # end
-    #
-    # non_github_formulae.each do |f|
-    # end
-    #
-    # report_file.close
+    puts "Non-tar formulae: #{stat_non_tar}"
+  end
 
-    # sampled_repos = github_repos.shuffle
-    # sampled_repos.each do |repo|
-    #   repo.fetch_license
-    #   puts "#{repo}, #{repo.license}, #{repo.license&.name}, #{repo.license&.key}"
-    # end
-    #
-    # num_github_repos_with_license = sampled_repos.count do |repo|
-    #   repo.license
-    # end
-    #
-    # num_github_repos_with_recognized_license = sampled_repos.count do |repo|
-    #   repo.license && repo.license.spdx_id != "NOASSERTION"
-    # end
-    #
-    # puts "total formulae: #{all_considered_formula.count}"
-    # puts "github formulae: #{github_repos.count}"
-    # puts "sampled github formulae: #{sampled_repos.count}"
-    # puts "sampled github formulae with license: #{num_github_repos_with_license}"
-    # puts "sampled github formulae with recognized open-source license: #{num_github_repos_with_recognized_license}"
+  def write_report(file, f, license, message)
+    file.write "#{f.name},#{license&.spdx_id || ""},#{message || ""}\n"
+    file.flush
   end
 
 end
