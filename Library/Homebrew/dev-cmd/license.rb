@@ -3,6 +3,8 @@ require 'json'
 require "formula_installer"
 require 'licensee'
 require 'set'
+require "commands"
+require "cli/parser"
 
 module GitHub
 
@@ -71,11 +73,37 @@ end
 module Homebrew
   module_function
 
-  def license
-    report
+  def license_args
+
+    Homebrew::CLI::Parser.new do
+      usage_banner <<~EOS
+        `license` [<options>]
+
+        Get or modify the licenses of formulae.
+      EOS
+      switch "--fetch",
+             description: "Fetch license information and append to `report.csv`."
+      switch "--rewrite",
+             description: "Rewrite existing formula with license information described in `report.csv`."
+      switch :verbose
+      switch :debug
+      conflicts "--fetch", "--rewrite"
+    end
   end
 
-  def report
+  def license
+    license_args.parse
+
+    if args.fetch?
+      fetch
+    elsif args.rewrite?
+      rewrite
+    else
+      odie "Add a command"
+    end
+  end
+
+  def fetch
     report_file = File.open "report.csv", "a+"
 
     already_processed = Set.new(report_file.readlines.map do |line|
