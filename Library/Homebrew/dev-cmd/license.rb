@@ -53,7 +53,7 @@ module GitHub
 
         # sleeping 1 second per API call should be enough to avoid rate-limiting issues
         # (3600 seconds / hour) * (hour / 5000 requests) < 1 second / request
-        sleep 1
+        # sleep 0.1
       end
     end
 
@@ -91,7 +91,6 @@ module Homebrew
     stat_processed = 0
     stat_start = Time.now
     stat_total = all_considered_formula.count
-    stat_non_tar = 0
 
     all_considered_formula.sort { |f, g| f.name <=> g.name }.each do |f|
       if already_processed.include? f.name
@@ -104,14 +103,6 @@ module Homebrew
         write_report(report_file, f, nil, "disabled")
 
         stat_total -= 1
-
-      elsif !f.stable.url.end_with? "tar.gz"
-        oh1 "Skipping #{f} because it is a non-tar file"
-
-        write_report(report_file, f, nil, "non-tar")
-
-        stat_total -= 1
-        stat_non_tar += 1
 
       elsif (github_repo = match_github_repo f)
         oh1 "Fetching GitHub license for #{f}"
@@ -127,17 +118,19 @@ module Homebrew
         fi = FormulaInstaller.new(f)
         fi.ignore_deps = true
         fi.prelude
-        targz_path = fi.fetch
-        system("tar -xf #{targz_path} -C #{File.dirname(targz_path)}")
+        compressed_fp = fi.fetch
+        if extract(compressed_fp.to_s)
+          path = "#{File.dirname(compressed_fp)}/#{f.name}/#{f.version}/"
+          license = Licensee.license path
+          write_report(report_file, f, license, "")
 
-        path = "#{File.dirname(targz_path)}/#{f.name}/#{f.version}/"
-        license = Licensee.license path
-        write_report(report_file, f, license, "")
+          stat_processed += 1
+        else
+          opoo "Unable to extract #{f}"
+          puts compressed_fp
 
-        # system("rm #{targz_path}")
-        # system("rm -rf #{File.dirname(targz_path)}/#{f.name}")
-
-        stat_processed += 1
+          stat_total -= 1
+        end
       end
 
       if stat_processed != 0
@@ -149,13 +142,19 @@ module Homebrew
     end
 
     report_file.close
-
-    puts "Non-tar formulae: #{stat_non_tar}"
   end
 
-  def write_report(file, f, license, message)
-    file.write "#{f.name},#{license&.spdx_id || ""},#{message || ""}\n"
+  def write_report(file, f, license, message = nil, description = nil)
+    file.write "#{f.name},#{license&.spdx_id || ""},#{message || ""},#{description || ""}\n"
     file.flush
+  end
+
+  def extract(path)
+    Dir.chdir File.dirname(path) do
+      return system("tar -xf #{path}") if path.end_with?(".bz2", ".gz", ".xz", ".tgz")
+      return system("unzip #{path}") if path.end_with?(".zip")
+      return false
+    end
   end
 
 end
