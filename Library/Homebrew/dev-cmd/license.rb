@@ -37,7 +37,7 @@ module GitHub
       uri = URI(uri_string)
       req = Net::HTTP::Get.new(uri)
       req['Accept'] = 'application/vnd.github.v3+json'
-      req['Authorization'] = "token #{ENV["GITHUB_API_TOKEN"]}"
+      req['Authorization'] = "token "
 
       res = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => true) { |http|
         http.request(req)
@@ -49,7 +49,7 @@ module GitHub
       else
         license_dict = res_dict["license"]
 
-        puts "[#{@full_name}] GitHub message: #{res_dict["message"]}" if res_dict["message"]
+        opoo "[#{@full_name}] GitHub message: #{res_dict["message"]}" if res_dict["message"]
 
         @license = License.new(license_dict) if license_dict
 
@@ -176,13 +176,16 @@ module Homebrew
   def extract(path)
     Dir.chdir File.dirname(path) do
       return system("tar -xf #{path}") if path.end_with?(".bz2", ".gz", ".xz", ".tgz")
-      return system("unzip #{path}") if path.end_with?(".zip")
+      return system("unzip -nq #{path}") if path.end_with?(".zip", ".jar")
       return false
     end
   end
 
   def match_github_repo(f)
-    match = f.stable.url.match %r{https?://github\.com/(downloads/)?(?<user>[^/]+)/(?<repo>[^/]+)/?.*}
+    regex = %r{https?://github\.com/(downloads/)?(?<user>[^/]+)/(?<repo>[^/]+)/?.*}
+    match = f.stable.url.match regex
+    match ||= f.devel&.url&.match regex
+    match ||= f.head&.url&.match regex
     return unless match
     user = match[:user]
     repo = match[:repo].delete_suffix(".git")
@@ -210,6 +213,8 @@ module Homebrew
     formula_file = File.open formula.path
     lines = formula_file.readlines
     formula_file.close
+
+    return if (lines.any? { |l| l.match?(/.*license\s*".*"\n/) })
 
     if (desc_index = lines.find_index { |line| line.match?(/.*desc\s*".*"\n/) })
       lines.insert(desc_index + 1, "  license \"#{name_to_license[formula.name]}\"\n")
