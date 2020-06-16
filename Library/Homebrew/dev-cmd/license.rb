@@ -215,7 +215,7 @@ module Homebrew
       lines.insert(desc_index + 1, "  license \"#{name_to_license[formula.name]}\"\n")
 
       formula_file = File.open formula.path, "w"
-      lines.each { |line| file.write line }
+      lines.each { |line| formula_file.write line }
       formula_file.close
     end
   end
