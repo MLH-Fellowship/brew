@@ -35,7 +35,7 @@ module GitHub
       uri = URI(uri_string)
       req = Net::HTTP::Get.new(uri)
       req['Accept'] = 'application/vnd.github.v3+json'
-      req['Authorization'] = "token "
+      req['Authorization'] = "token #{ENV["GITHUB_API_TOKEN"]}"
 
       res = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => true) { |http|
         http.request(req)
@@ -71,15 +71,11 @@ end
 module Homebrew
   module_function
 
-  def match_github_repo(f)
-    match = f.stable.url.match %r{https?://github\.com/(downloads/)?(?<user>[^/]+)/(?<repo>[^/]+)/?.*}
-    return unless match
-    user = match[:user]
-    repo = match[:repo].delete_suffix(".git")
-    GitHub::Repo.new("#{user}/#{repo}", formula_name: f.name)
+  def license
+    report
   end
 
-  def license
+  def report
     report_file = File.open "report.csv", "a+"
 
     already_processed = Set.new(report_file.readlines.map do |line|
@@ -154,6 +150,45 @@ module Homebrew
       return system("tar -xf #{path}") if path.end_with?(".bz2", ".gz", ".xz", ".tgz")
       return system("unzip #{path}") if path.end_with?(".zip")
       return false
+    end
+  end
+
+  def match_github_repo(f)
+    match = f.stable.url.match %r{https?://github\.com/(downloads/)?(?<user>[^/]+)/(?<repo>[^/]+)/?.*}
+    return unless match
+    user = match[:user]
+    repo = match[:repo].delete_suffix(".git")
+    GitHub::Repo.new("#{user}/#{repo}", formula_name: f.name)
+  end
+
+  def rewrite
+    report_file = File.open "report.csv", "r"
+    name_to_license = Hash.new
+    report_file.readlines.each do |line|
+      components = line.split(",")
+      name_to_license[components[0]] = components[1] unless components[1] == "" || components[1] == "NOASSERTION"
+    end
+    report_file.close
+
+    Formula.each do |f|
+      puts f.name
+      rewrite_formula name_to_license, f
+    end
+  end
+
+  def rewrite_formula(name_to_license, formula)
+    return unless name_to_license.has_key?(formula.name)
+
+    formula_file = File.open formula.path
+    lines = formula_file.readlines
+    formula_file.close
+
+    if (desc_index = lines.find_index { |line| line.match?(/.*desc\s*".*"\n/) })
+      lines.insert(desc_index + 1, "  license \"#{name_to_license[formula.name]}\"\n")
+
+      formula_file = File.open formula.path, "w"
+      lines.each { |line| file.write line }
+      formula_file.close
     end
   end
 
