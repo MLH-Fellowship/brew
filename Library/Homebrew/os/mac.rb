@@ -12,7 +12,7 @@ module OS
 
     # rubocop:disable Naming/ConstantName
     # rubocop:disable Style/MutableConstant
-    ::MacOS = self
+    ::MacOS = OS::Mac
     # rubocop:enable Naming/ConstantName
     # rubocop:enable Style/MutableConstant
 
@@ -21,7 +21,7 @@ module OS
     # This can be compared to numerics, strings, or symbols
     # using the standard Ruby Comparable methods.
     def version
-      @version ||= Version.new(full_version.to_s[/10\.\d+/])
+      @version ||= Version.new(full_version.to_s[/^\d+\.\d+/])
     end
 
     # This can be compared to numerics, strings, or symbols
@@ -43,14 +43,14 @@ module OS
     def latest_stable_version
       # TODO: bump version when new macOS is released and also update
       # references in docs/Installation.md and
-      # https://github.com/Homebrew/install/blob/master/install
+      # https://github.com/Homebrew/install/blob/HEAD/install
       Version.new "10.15"
     end
 
     def outdated_release?
       # TODO: bump version when new macOS is released and also update
       # references in docs/Installation.md and
-      # https://github.com/Homebrew/install/blob/master/install
+      # https://github.com/Homebrew/install/blob/HEAD/install
       version < "10.13"
     end
 

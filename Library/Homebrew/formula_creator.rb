@@ -6,7 +6,7 @@ require "erb"
 module Homebrew
   class FormulaCreator
     attr_reader :url, :sha256, :desc, :homepage
-    attr_accessor :name, :version, :tap, :path, :mode
+    attr_accessor :name, :version, :tap, :path, :mode, :license
 
     def url=(url)
       @url = url
@@ -100,9 +100,12 @@ module Homebrew
         <% end %>
           sha256 "#{sha256}"
         <% end %>
+          license "#{license}"
 
         <% if mode == :cmake %>
           depends_on "cmake" => :build
+        <% elsif mode == :crystal %>
+          depends_on "crystal" => :build
         <% elsif mode == :go %>
           depends_on "go" => :build
         <% elsif mode == :meson %>
@@ -138,6 +141,9 @@ module Homebrew
                                   "--disable-dependency-tracking",
                                   "--disable-silent-rules",
                                   "--prefix=\#{prefix}"
+        <% elsif mode == :crystal %>
+            system "shards", "build", "--release"
+            bin.install "bin/#{name}"
         <% elsif mode == :go %>
             system "go", "build", *std_go_args
         <% elsif mode == :meson %>
@@ -175,7 +181,7 @@ module Homebrew
             bin.install libexec/"bin/\#{name}"
             bin.env_script_all_files(libexec/"bin", :GEM_HOME => ENV["GEM_HOME"])
         <% elsif mode == :rust %>
-            system "cargo", "install", "--locked", "--root", prefix, "--path", "."
+            system "cargo", "install", *std_cargo_args
         <% else %>
             # Remove unrecognized options if warned by configure
             system "./configure", "--disable-debug",

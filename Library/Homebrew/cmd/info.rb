@@ -29,11 +29,11 @@ module Homebrew
              description: "List global Homebrew analytics data or, if specified, installation and "\
                           "build error data for <formula> (provided neither `HOMEBREW_NO_ANALYTICS` "\
                           "nor `HOMEBREW_NO_GITHUB_API` are set)."
-      flag   "--days",
+      flag   "--days=",
              depends_on:  "--analytics",
              description: "How many days of analytics data to retrieve. "\
                           "The value for <days> must be `30`, `90` or `365`. The default is `30`."
-      flag   "--category",
+      flag   "--category=",
              depends_on:  "--analytics",
              description: "Which type of analytics data to retrieve. "\
                           "The value for <category> must be `install`, `install-on-request` or `build-error`; "\
@@ -140,7 +140,7 @@ module Homebrew
 
   def github_remote_path(remote, path)
     if remote =~ %r{^(?:https?://|git(?:@|://))github\.com[:/](.+)/(.+?)(?:\.git)?$}
-      "https://github.com/#{Regexp.last_match(1)}/#{Regexp.last_match(2)}/blob/master/#{path}"
+      "https://github.com/#{Regexp.last_match(1)}/#{Regexp.last_match(2)}/blob/HEAD/#{path}"
     else
       "#{remote}/#{path}"
     end

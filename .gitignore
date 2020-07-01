@@ -19,6 +19,7 @@
 /Library/Taps
 /Library/PinnedTaps
 /Library/Homebrew/.byebug_history
+/Library/Homebrew/sorbet/rbi/hidden-definitions/errors.txt
 
 # Ignore Bundler files
 **/.bundle/bin
@@ -82,6 +83,7 @@
 # Ignore dependencies we don't wish to vendor
 **/vendor/bundle/ruby/*/gems/ast-*/
 **/vendor/bundle/ruby/*/gems/bundler-*/
+**/vendor/bundle/ruby/*/gems/byebug-*/
 **/vendor/bundle/ruby/*/gems/coderay-*/
 **/vendor/bundle/ruby/*/gems/connection_pool-*/
 **/vendor/bundle/ruby/*/gems/coveralls-*/
@@ -134,7 +136,14 @@
 **/vendor/bundle/ruby/*/gems/unf-*/
 **/vendor/bundle/ruby/*/gems/unicode-display_width-*/
 **/vendor/bundle/ruby/*/gems/webrobots-*/
-**/vendor/bundle/ruby/*/gems/byebug-*/
+
+# Ignore conditional dependencies we don't wish to vendor
+**/vendor/bundle/ruby/*/gems/bindata-*/
+**/vendor/bundle/ruby/*/gems/elftools-*/
+**/vendor/bundle/ruby/*/gems/patchelf-*/
+**/vendor/bundle/ruby/*/gems/sorbet-*/
+**/vendor/bundle/ruby/*/gems/sorbet-runtime-*/
+**/vendor/bundle/ruby/*/gems/tapioca-*/
 
 # Ignore `bin` contents (again).
 /bin

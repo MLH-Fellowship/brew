@@ -78,6 +78,17 @@ RSpec.configure do |config|
     c.max_formatted_output_length = 200
   end
 
+  # Use rspec-retry in CI.
+  if ENV["CI"]
+    config.verbose_retry = true
+    config.display_try_failure_messages = true
+    config.default_retry_count = 2
+
+    config.around(:each, :needs_network) do |example|
+      example.run_with_retry retry: 3, retry_wait: 3
+    end
+  end
+
   # Never truncate output objects.
   RSpec::Support::ObjectFormatter.default_instance.max_formatted_output_length = nil
 
@@ -124,11 +135,9 @@ RSpec.configure do |config|
     skip "Requires network connection." unless ENV["HOMEBREW_TEST_ONLINE"]
   end
 
-  config.around(:each, :needs_network) do |example|
-    example.run_with_retry retry: 3, retry_wait: 1
-  end
-
   config.before(:each, :needs_svn) do
+    skip "subversion not installed." unless quiet_system "#{HOMEBREW_SHIMS_PATH}/scm/svn", "--version"
+
     svn_paths = PATH.new(ENV["PATH"])
     if OS.mac?
       xcrun_svn = Utils.popen_read("xcrun", "-f", "svn")

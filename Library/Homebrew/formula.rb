@@ -1357,6 +1357,11 @@ class Formula
     "#<Formula #{name} (#{active_spec_sym}) #{path}>"
   end
 
+  # Standard parameters for cargo builds.
+  def std_cargo_args
+    ["--locked", "--root", prefix, "--path", "."]
+  end
+
   # Standard parameters for CMake builds.
   # Setting `CMAKE_FIND_FRAMEWORK` to "LAST" tells CMake to search for our
   # libraries before trying to utilize Frameworks, many of which will be from
@@ -1403,6 +1408,10 @@ class Formula
   # Standard parameters for meson builds.
   def std_meson_args
     ["--prefix=#{prefix}", "--libdir=#{lib}"]
+  end
+
+  def shared_library(name, version = nil)
+    "#{name}.#{version}#{"." unless version.nil?}dylib"
   end
 
   # an array of all core {Formula} names
@@ -1934,6 +1943,8 @@ class Formula
       case cmd
       when "./configure"
         pretty_args -= %w[--disable-dependency-tracking --disable-debug --disable-silent-rules]
+      when "cargo"
+        pretty_args -= std_cargo_args
       when "cmake"
         pretty_args -= std_cmake_args
       when "go"
@@ -2146,6 +2157,7 @@ class Formula
         stage_env[:_JAVA_OPTIONS] =
           "#{ENV["_JAVA_OPTIONS"]&.+(" ")}-Duser.home=#{HOMEBREW_CACHE}/java_cache"
         stage_env[:GOCACHE] = "#{HOMEBREW_CACHE}/go_cache"
+        stage_env[:GOPATH] = "#{HOMEBREW_CACHE}/go_mod_cache"
         stage_env[:CARGO_HOME] = "#{HOMEBREW_CACHE}/cargo_cache"
         stage_env[:CURL_HOME] = ENV["CURL_HOME"] || ENV["HOME"]
       end
@@ -2207,7 +2219,7 @@ class Formula
     # The SPDX ID of the open-source license that the formula uses.
     # Shows when running `brew info`.
     #
-    # <pre>license " BSD-2-Clause"</pre>
+    # <pre>license "BSD-2-Clause"</pre>
     attr_rw :license
 
     # @!attribute [w] homepage
@@ -2485,13 +2497,13 @@ class Formula
       specs.each { |spec| spec.uses_from_macos(dep, bounds) }
     end
 
-    # Block executed only executed on macOS. No-op on Linux.
+    # Block only executed on macOS. No-op on Linux.
     # <pre>on_macos do
     #   depends_on "mac_only_dep"
     # end</pre>
     def on_macos(&_block); end
 
-    # Block executed only executed on Linux. No-op on macOS.
+    # Block only executed on Linux. No-op on macOS.
     # <pre>on_linux do
     #   depends_on "linux_only_dep"
     # end</pre>
@@ -2647,9 +2659,13 @@ class Formula
     #
     # The block will create, run in and delete a temporary directory.
     #
-    # We are fine if the executable does not error out, so we know linking
-    # and building the software was OK.
-    # <pre>system bin/"foobar", "--version"</pre>
+    # We want tests that don't require any user input
+    # and test the basic functionality of the application.
+    # For example foo build-foo input.foo is a good test
+    # and foo --version and foo --help are bad tests.
+    # However, a bad test is better than no test at all.
+    #
+    # See: https://docs.brew.sh/Formula-Cookbook#add-a-test-to-the-formula
     #
     # <pre>(testpath/"test.file").write <<~EOS
     #   writing some test file, if you need to

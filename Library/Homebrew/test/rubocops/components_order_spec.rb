@@ -19,6 +19,18 @@ describe RuboCop::Cop::FormulaAudit::ComponentsOrder do
       RUBY
     end
 
+    it "When license precedes sha256" do
+      expect_offense(<<~RUBY)
+        class Foo < Formula
+          homepage "https://brew.sh"
+          url "https://brew.sh/foo-1.0.tgz"
+          license "0BSD"
+          sha256 "samplesha256"
+          ^^^^^^^^^^^^^^^^^^^^^ `sha256` (line 5) should be put before `license` (line 4)
+        end
+      RUBY
+    end
+
     it "When `bottle` precedes `livecheck`" do
       expect_offense(<<~RUBY)
         class Foo < Formula
@@ -73,6 +85,37 @@ describe RuboCop::Cop::FormulaAudit::ComponentsOrder do
           def plist
           ^^^^^^^^^ `plist` (line 8) should be put before `test` (line 4)
           end
+        end
+      RUBY
+    end
+
+    it "When `install` precedes `depends_on`" do
+      expect_offense(<<~RUBY)
+        class Foo < Formula
+          url "https://brew.sh/foo-1.0.tgz"
+
+          def install
+          end
+
+          depends_on "openssl"
+          ^^^^^^^^^^^^^^^^^^^^ `depends_on` (line 7) should be put before `install` (line 4)
+        end
+      RUBY
+    end
+
+    it "When `test` precedes `depends_on`" do
+      expect_offense(<<~RUBY)
+        class Foo < Formula
+          url "https://brew.sh/foo-1.0.tgz"
+
+          def install
+          end
+
+          def test
+          end
+
+          depends_on "openssl"
+          ^^^^^^^^^^^^^^^^^^^^ `depends_on` (line 10) should be put before `install` (line 4)
         end
       RUBY
     end

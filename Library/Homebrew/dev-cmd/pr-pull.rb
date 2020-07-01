@@ -34,13 +34,18 @@ module Homebrew
              description: "When a patch fails to apply, leave in progress and allow user to resolve, "\
                           "instead of aborting."
       flag   "--workflow=",
-             description: "Retrieve artifacts from the specified workflow (default: tests.yml)."
+             description: "Retrieve artifacts from the specified workflow (default: `tests.yml`)."
       flag   "--artifact=",
-             description: "Download artifacts with the specified name (default: bottles)."
+             description: "Download artifacts with the specified name (default: `bottles`)."
       flag   "--bintray-org=",
-             description: "Upload to the specified Bintray organisation (default: homebrew)."
+             description: "Upload to the specified Bintray organisation (default: `homebrew`)."
       flag   "--tap=",
-             description: "Target tap repository (default: homebrew/core)."
+             description: "Target tap repository (default: `homebrew/core`)."
+      flag   "--root-url=",
+             description: "Use the specified <URL> as the root of the bottle's URL instead of Homebrew's default."
+      flag   "--bintray-mirror=",
+             description: "Use the specified Bintray repository to automatically mirror stable URLs "\
+                          "defined in the formulae (default: `mirror`)."
       switch :verbose
       switch :debug
       min_named 1
@@ -68,13 +73,18 @@ module Homebrew
     end
   end
 
-  def signoff!(pr, path: ".")
-    message = Utils.popen_read "git", "-C", path, "log", "-1", "--pretty=%B"
+  def signoff!(pr, tap:)
+    message = Utils.popen_read "git", "-C", tap.path, "log", "-1", "--pretty=%B"
     subject = message.lines.first.strip
 
     # Skip the subject and separate lines that look like trailers (e.g. "Co-authored-by")
     # from lines that look like regular body text.
     trailers, body = message.lines.drop(1).partition { |s| s.match?(/^[a-z-]+-by:/i) }
+
+    # Approving reviewers also sign-off on merge
+    trailers += GitHub.approved_reviews(tap.user, "homebrew-#{tap.repo}", pr).map do |r|
+      "Signed-off-by: #{r["name"]} <#{r["email"]}>\n"
+    end
     trailers = trailers.uniq.join.strip
     body = body.join.strip.gsub(/\n{3,}/, "\n\n")
 
@@ -85,7 +95,7 @@ module Homebrew
     if Homebrew.args.dry_run?
       puts "git commit --amend --signoff -m $message"
     else
-      safe_system "git", "-C", path, "commit", "--amend", "--signoff", "--allow-empty", "-q", "-m", new_message
+      safe_system "git", "-C", tap.path, "commit", "--amend", "--signoff", "--allow-empty", "-q", "-m", new_message
     end
   end
 
@@ -128,6 +138,32 @@ module Homebrew
   def formulae_need_bottles?(tap, original_commit)
     return if Homebrew.args.dry_run?
 
+    changed_formulae(tap, original_commit).any? do |f|
+      !f.bottle_unneeded? && !f.bottle_disabled?
+    end
+  end
+
+  def mirror_formulae(tap, original_commit, publish: true, org:, repo:)
+    changed_formulae(tap, original_commit).select do |f|
+      stable_urls = [f.stable.url] + f.stable.mirrors
+      stable_urls.grep(%r{^https://dl.bintray.com/#{org}/#{repo}/}) do |mirror_url|
+        if Homebrew.args.dry_run?
+          puts "brew mirror #{f.full_name}"
+        else
+          odebug "Mirroring #{mirror_url}"
+          mirror_args = ["mirror", f.full_name]
+          mirror_args << "--debug" if Homebrew.args.debug?
+          mirror_args << "--verbose" if Homebrew.args.verbose?
+          mirror_args << "--bintray-org=#{org}" if org
+          mirror_args << "--bintray-repo=#{repo}" if repo
+          mirror_args << "--no-publish" unless publish
+          system HOMEBREW_BREW_FILE, *mirror_args
+        end
+      end
+    end
+  end
+
+  def changed_formulae(tap, original_commit)
     if Homebrew::EnvConfig.disable_load_formula?
       opoo "Can't check if updated bottles are necessary as formula loading is disabled!"
       return
@@ -136,19 +172,17 @@ module Homebrew
     Utils.popen_read("git", "-C", tap.path, "diff-tree",
                      "-r", "--name-only", "--diff-filter=AM",
                      original_commit, "HEAD", "--", tap.formula_dir)
-         .lines.each do |line|
+         .lines.map do |line|
       next unless line.end_with? ".rb\n"
 
       name = "#{tap.name}/#{File.basename(line.chomp, ".rb")}"
       begin
-        f = Formula[name]
+        Formula[name]
       rescue Exception # rubocop:disable Lint/RescueException
         # Make sure we catch syntax errors.
         next
       end
-      return true if !f.bottle_unneeded? && !f.bottle_disabled?
-    end
-    nil
+    end.compact
   end
 
   def download_artifact(url, dir, pr)
@@ -181,12 +215,11 @@ module Homebrew
 
     if bintray_user.blank? || bintray_key.blank?
       odie "Missing HOMEBREW_BINTRAY_USER or HOMEBREW_BINTRAY_KEY variables!" if !args.dry_run? && !args.no_upload?
-    else
-      bintray = Bintray.new(user: bintray_user, key: bintray_key, org: bintray_org)
     end
 
     workflow = args.workflow || "tests.yml"
     artifact = args.artifact || "bottles"
+    mirror_repo = args.bintray_mirror || "mirror"
     tap = Tap.fetch(args.tap || CoreTap.instance.name)
 
     setup_git_environment!
@@ -204,7 +237,11 @@ module Homebrew
         cd dir do
           original_commit = Utils.popen_read("git", "-C", tap.path, "rev-parse", "HEAD").chomp
           cherry_pick_pr! pr, path: tap.path
-          signoff! pr, path: tap.path unless args.clean?
+          signoff! pr, tap: tap unless args.clean?
+
+          unless args.no_upload?
+            mirror_formulae(tap, original_commit, org: bintray_org, repo: mirror_repo, publish: !args.no_publish?)
+          end
 
           unless formulae_need_bottles? tap, original_commit
             ohai "Skipping artifacts for ##{pr} as the formulae don't need bottles"
@@ -214,19 +251,16 @@ module Homebrew
           url = GitHub.get_artifact_url(user, repo, pr, workflow_id: workflow, artifact_name: artifact)
           download_artifact(url, dir, pr)
 
-          if Homebrew.args.dry_run?
-            puts "brew bottle --merge --write #{Dir["*.json"].join " "}"
-          else
-            quiet_system "#{HOMEBREW_PREFIX}/bin/brew", "bottle", "--merge", "--write", *Dir["*.json"]
-          end
-
           next if args.no_upload?
 
-          if Homebrew.args.dry_run?
-            puts "Upload bottles described by these JSON files to Bintray:\n  #{Dir["*.json"].join("\n  ")}"
-          else
-            bintray.upload_bottle_json Dir["*.json"], publish_package: !args.no_publish?
-          end
+          upload_args = ["pr-upload"]
+          upload_args << "--debug" if Homebrew.args.debug?
+          upload_args << "--verbose" if Homebrew.args.verbose?
+          upload_args << "--no-publish" if args.no_publish?
+          upload_args << "--dry-run" if args.dry_run?
+          upload_args << "--root_url=#{args.root_url}" if args.root_url
+          upload_args << "--bintray-org=#{bintray_org}"
+          system HOMEBREW_BREW_FILE, *upload_args
         end
       end
     end

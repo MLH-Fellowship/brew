@@ -340,6 +340,8 @@ Show install options specific to *`formula`*.
   Show options for formulae that are currently installed.
 * `--all`:
   Show options for all available formulae.
+* `--command`:
+  Show options for the specified *`command`*.
 
 ### `outdated` [*`options`*] [*`formula`*]
 
@@ -367,10 +369,10 @@ Rerun the post-install steps for *`formula`*.
 
 ### `readall` [*`options`*] [*`tap`*]
 
-Import all formulae from the specified *`tap`*, or from all installed taps if none
-is provided. This can be useful for debugging issues across all formulae when
-making significant changes to `formula.rb`, testing the performance of loading
-all formulae or checking if any current formulae have Ruby issues.
+Import all items from the specified *`tap`*, or from all installed taps if none is
+provided. This can be useful for debugging issues across all items when making
+significant changes to `formula.rb`, testing the performance of loading all
+items or checking if any current formulae/casks have Ruby issues.
 
 * `--aliases`:
   Verify any alias symlinks in each tap.
@@ -587,6 +589,10 @@ If *`formula`* is provided, display the file or directory used to cache *`formul
   Show the cache file used when building from source.
 * `--force-bottle`:
   Show the cache file used when pouring a bottle.
+* `--formula`:
+  Only show cache files for formulae.
+* `--cask`:
+  Only show cache files for casks.
 
 ### `--cellar` [*`formula`*]
 
@@ -765,6 +771,8 @@ a simple example. For the complete API, see:
   Create a basic template for an Autotools-style build.
 * `--cmake`:
   Create a basic template for a CMake-style build.
+* `--crystal`:
+  Create a basic template for a Crystal build.
 * `--go`:
   Create a basic template for a Go build.
 * `--meson`:
@@ -785,6 +793,8 @@ a simple example. For the complete API, see:
   Explicitly set the *`name`* of the new formula.
 * `--set-version`:
   Explicitly set the *`version`* of the new formula.
+* `--set-license`:
+  Explicitly set the *`license`* of the new formula.
 * `--tap`:
   Generate the new formula within the given tap, specified as *`user`*`/`*`repo`*.
 
@@ -894,13 +904,17 @@ repository.
 * `--resolve`:
   When a patch fails to apply, leave in progress and allow user to resolve, instead of aborting.
 * `--workflow`:
-  Retrieve artifacts from the specified workflow (default: tests.yml).
+  Retrieve artifacts from the specified workflow (default: `tests.yml`).
 * `--artifact`:
-  Download artifacts with the specified name (default: bottles).
+  Download artifacts with the specified name (default: `bottles`).
 * `--bintray-org`:
-  Upload to the specified Bintray organisation (default: homebrew).
+  Upload to the specified Bintray organisation (default: `homebrew`).
 * `--tap`:
-  Target tap repository (default: homebrew/core).
+  Target tap repository (default: `homebrew/core`).
+* `--root-url`:
+  Use the specified *`URL`* as the root of the bottle's URL instead of Homebrew's default.
+* `--bintray-mirror`:
+  Use the specified Bintray repository to automatically mirror stable URLs defined in the formulae (default: `mirror`).
 
 ### `pr-upload` [*`options`*]
 
@@ -911,7 +925,7 @@ Apply the bottle commit and publish bottles to Bintray.
 * `-n`, `--dry-run`:
   Print what would be done rather than doing it.
 * `--bintray-org`:
-  Upload to the specified Bintray organisation (default: homebrew).
+  Upload to the specified Bintray organisation (default: `homebrew`).
 * `--root-url`:
   Use the specified *`URL`* as the root of the bottle's URL instead of Homebrew's default.
 
@@ -1015,6 +1029,13 @@ directory.
   Patches for *`formula`* will be applied to the unpacked source.
 * `-g`, `--git`:
   Initialise a Git repository in the unpacked source. This is useful for creating patches for the software.
+
+### `update_license_data` *`cmd`*
+
+ Update SPDX license data in the Homebrew repository.
+
+* `--fail-if-changed`:
+  Return a failing status code if current license data's version is different from the upstream. This can be used to notify CI when the SPDX license data is out of date.
 
 ### `update-test` [*`options`*]
 
@@ -1280,6 +1301,11 @@ Note that environment variables must have a value set to be detected. For exampl
 
   * `HOMEBREW_BAT`:
     If set, use `bat` for the `brew cat` command.
+
+  * `HOMEBREW_BAT_CONFIG_PATH`:
+    Use the `bat` configuration file. For example, `HOMEBREW_BAT=$HOME/.bat/config`.
+
+    *Default:* $HOME/.bat/config
 
   * `HOMEBREW_BINTRAY_KEY`:
     Use this API key when accessing the Bintray API (where bottles are stored).

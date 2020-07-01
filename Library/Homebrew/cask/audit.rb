@@ -38,7 +38,10 @@ module Cask
       check_sha256
       check_url
       check_generic_artifacts
+      check_token_valid
+      check_token_bad_words
       check_token_conflicts
+      check_languages
       check_download
       check_https_availability
       check_single_pre_postflight
@@ -216,7 +219,7 @@ module Cask
     def check_hosting_with_appcast
       return if cask.appcast
 
-      add_appcast = "please add an appcast. See https://github.com/Homebrew/homebrew-cask/blob/master/doc/cask_language_reference/stanzas/appcast.md"
+      add_appcast = "please add an appcast. See https://github.com/Homebrew/homebrew-cask/blob/HEAD/doc/cask_language_reference/stanzas/appcast.md"
 
       case cask.url.to_s
       when %r{github.com/([^/]+)/([^/]+)/releases/download/(\S+)}
@@ -243,9 +246,9 @@ module Cask
     def check_download_url_format
       odebug "Auditing URL format"
       if bad_sourceforge_url?
-        add_warning "SourceForge URL format incorrect. See https://github.com/Homebrew/homebrew-cask/blob/master/doc/cask_language_reference/stanzas/url.md#sourceforgeosdn-urls"
+        add_warning "SourceForge URL format incorrect. See https://github.com/Homebrew/homebrew-cask/blob/HEAD/doc/cask_language_reference/stanzas/url.md#sourceforgeosdn-urls"
       elsif bad_osdn_url?
-        add_warning "OSDN URL format incorrect. See https://github.com/Homebrew/homebrew-cask/blob/master/doc/cask_language_reference/stanzas/url.md#sourceforgeosdn-urls"
+        add_warning "OSDN URL format incorrect. See https://github.com/Homebrew/homebrew-cask/blob/HEAD/doc/cask_language_reference/stanzas/url.md#sourceforgeosdn-urls"
       end
     end
 
@@ -275,11 +278,72 @@ module Cask
       end
     end
 
+    def check_languages
+      invalid = []
+      @cask.languages.each do |language|
+        invalid << language.to_s unless language.match?(/^[a-z]{2}$/) || language.match?(/^[a-z]{2}-[A-Z]{2}$/)
+      end
+
+      return if invalid.empty?
+
+      add_error "locale #{invalid.join(", ")} are invalid"
+    end
+
     def check_token_conflicts
       return unless @token_conflicts
       return unless core_formula_names.include?(cask.token)
 
       add_warning "possible duplicate, cask token conflicts with Homebrew core formula: #{core_formula_url}"
+    end
+
+    def check_token_valid
+      return unless @strict
+
+      add_warning "cask token is not lowercase" if cask.token.downcase!
+
+      add_warning "cask token contains non-ascii characters" unless cask.token.ascii_only?
+
+      add_warning "cask token + should be replaced by -plus-" if cask.token.include? "+"
+
+      add_warning "cask token @ should be replaced by -at-" if cask.token.include? "@"
+
+      add_warning "cask token whitespace should be replaced by hyphens" if cask.token.include? " "
+
+      add_warning "cask token underscores should be replaced by hyphens" if cask.token.include? "_"
+
+      if cask.token.match?(/[^a-z0-9\-]/)
+        add_warning "cask token should only contain alphanumeric characters and hyphens"
+      end
+
+      add_warning "cask token should not contain double hyphens" if cask.token.include? "--"
+
+      return unless cask.token.end_with?("-") || cask.token.start_with?("-")
+
+      add_warning "cask token should not have leading or trailing hyphens"
+    end
+
+    def check_token_bad_words
+      return unless @strict
+
+      token = cask.token
+
+      add_warning "cask token contains .app" if token.end_with? ".app"
+
+      if cask.token.end_with? "alpha", "beta", "release candidate"
+        add_warning "cask token contains version designation"
+      end
+
+      add_warning "cask token mentions launcher" if token.end_with? "launcher"
+
+      add_warning "cask token mentions desktop" if token.end_with? "desktop"
+
+      add_warning "cask token mentions platform" if token.end_with? "mac", "osx", "macos"
+
+      add_warning "cask token mentions architecture" if token.end_with? "x86", "32_bit", "x86_64", "64_bit"
+
+      return unless token.end_with?("cocoa", "qt", "gtk", "wx", "java") && !%w[cocoa qt gtk wx java].include?(token)
+
+      add_warning "cask token mentions framework"
     end
 
     def core_tap
@@ -291,7 +355,7 @@ module Cask
     end
 
     def core_formula_url
-      "#{core_tap.default_remote}/blob/master/Formula/#{cask.token}.rb"
+      "#{core_tap.default_remote}/blob/HEAD/Formula/#{cask.token}.rb"
     end
 
     def check_download
@@ -310,10 +374,16 @@ module Cask
       return if cask.appcast.must_contain == :no_check
 
       appcast_stanza = cask.appcast.to_s
-      appcast_contents, = curl_output("--compressed", "--user-agent", HOMEBREW_USER_AGENT_FAKE_SAFARI, "--location",
-                                      "--globoff", "--max-time", "5", appcast_stanza)
+      appcast_contents, = begin
+        curl_output("--compressed", "--user-agent", HOMEBREW_USER_AGENT_FAKE_SAFARI, "--location",
+                    "--globoff", "--max-time", "5", appcast_stanza)
+      rescue
+        add_error "appcast at URL '#{appcast_stanza}' offline or looping"
+        return
+      end
+
       version_stanza = cask.version.to_s
-      adjusted_version_stanza = if cask.appcast.configuration.blank?
+      adjusted_version_stanza = if cask.appcast.must_contain.blank?
         version_stanza.match(/^[[:alnum:].]+/)[0]
       else
         cask.appcast.must_contain
@@ -322,8 +392,6 @@ module Cask
 
       add_warning "appcast at URL '#{appcast_stanza}' does not contain"\
                   " the version number '#{adjusted_version_stanza}':\n#{appcast_contents}"
-    rescue
-      add_error "appcast at URL '#{appcast_stanza}' offline or looping"
     end
 
     def check_github_repository

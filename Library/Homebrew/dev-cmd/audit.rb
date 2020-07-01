@@ -12,6 +12,7 @@ require "date"
 require "missing_formula"
 require "digest"
 require "cli/parser"
+require "json"
 
 module Homebrew
   module_function
@@ -109,7 +110,9 @@ module Homebrew
 
     # Check style in a single batch run up front for performance
     style_results = Style.check_style_json(style_files, options) if style_files
-
+    # load licenses
+    spdx = HOMEBREW_LIBRARY_PATH/"data/spdx.json"
+    spdx_data = JSON.parse(spdx.read)
     new_formula_problem_lines = []
     audit_formulae.sort.each do |f|
       only = only_cops ? ["style"] : args.only
@@ -120,6 +123,7 @@ module Homebrew
         git:         git,
         only:        only,
         except:      args.except,
+        spdx_data:   spdx_data,
       }
       options[:style_offenses] = style_results.file_offenses(f.path) if style_results
       options[:display_cop_names] = args.display_cop_names?
@@ -166,14 +170,6 @@ module Homebrew
 
     def without_patch
       @text.split("\n__END__").first
-    end
-
-    def data?
-      /^[^#]*\bDATA\b/ =~ @text
-    end
-
-    def end?
-      /^__END__$/ =~ @text
     end
 
     def trailing_newline?
@@ -223,6 +219,7 @@ module Homebrew
       @new_formula_problems = []
       @text = FormulaText.new(formula.path)
       @specs = %w[stable devel head].map { |s| formula.send(s) }.compact
+      @spdx_data = options[:spdx_data]
     end
 
     def audit_style
@@ -234,12 +231,6 @@ module Homebrew
     end
 
     def audit_file
-      # TODO: check could be in RuboCop
-      problem "'DATA' was found, but no '__END__'" if text.data? && !text.end?
-
-      # TODO: check could be in RuboCop
-      problem "'__END__' was found, but 'DATA' is not used" if text.end? && !text.data?
-
       # TODO: check could be in RuboCop
       if text.to_s.match?(/inreplace [^\n]* do [^\n]*\n[^\n]*\.gsub![^\n]*\n\ *end/m)
         problem "'inreplace ... do' was used for a single substitution (use the non-block form instead)."
@@ -340,6 +331,27 @@ module Homebrew
       openblas
       openssl@1.1
     ].freeze
+
+    def audit_license
+      if formula.license.present?
+        if @spdx_data["licenses"].any? { |lic| lic["licenseId"] == formula.license }
+          return unless @online
+
+          user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
+          return if user.blank?
+
+          github_license = GitHub.get_repo_license(user, repo)
+          return if github_license && (github_license == formula.license)
+
+          problem "License mismatch - GitHub license is: #{github_license}, "\
+                  "but Formulae license states: #{formula.license}."
+        else
+          problem "#{formula.license} is not a standard SPDX license."
+        end
+      elsif @new_formula
+        problem "No license specified for package."
+      end
+    end
 
     def audit_deps
       @specs.each do |spec|
@@ -516,8 +528,9 @@ module Homebrew
     end
 
     def audit_github_repository
-      user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*})
-      return if user.nil?
+      user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
+
+      return if user.blank?
 
       warning = SharedAudits.github(user, repo)
       return if warning.nil?
@@ -526,8 +539,8 @@ module Homebrew
     end
 
     def audit_gitlab_repository
-      user, repo = get_repo_data(%r{https?://gitlab\.com/([^/]+)/([^/]+)/?.*})
-      return if user.nil?
+      user, repo = get_repo_data(%r{https?://gitlab\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
+      return if user.blank?
 
       warning = SharedAudits.gitlab(user, repo)
       return if warning.nil?
@@ -536,8 +549,8 @@ module Homebrew
     end
 
     def audit_bitbucket_repository
-      user, repo = get_repo_data(%r{https?://bitbucket\.org/([^/]+)/([^/]+)/?.*})
-      return if user.nil?
+      user, repo = get_repo_data(%r{https?://bitbucket\.org/([^/]+)/([^/]+)/?.*}) if @new_formula
+      return if user.blank?
 
       warning = SharedAudits.bitbucket(user, repo)
       return if warning.nil?
@@ -548,7 +561,6 @@ module Homebrew
     def get_repo_data(regex)
       return unless @core_tap
       return unless @online
-      return unless @new_formula
 
       _, user, repo = *regex.match(formula.stable.url) if formula.stable
       _, user, repo = *regex.match(formula.homepage) unless user
@@ -567,6 +579,7 @@ module Homebrew
     THROTTLED_DENYLIST = {
       "aws-sdk-cpp" => "10",
       "awscli@1"    => "10",
+      "balena-cli"  => "10",
       "quicktype"   => "10",
       "vim"         => "50",
     }.freeze
@@ -596,6 +609,8 @@ module Homebrew
       "gcab"                => "1.3",
       "libepoxy"            => "1.5",
     }.freeze
+
+    GITHUB_PRERELEASE_ALLOWLIST = %w[cake].freeze
 
     # version_prefix = stable_version_string.sub(/\d+$/, "")
     # version_prefix = stable_version_string.split(".")[0..1].join(".")
@@ -705,8 +720,11 @@ module Homebrew
 
         begin
           if @online && (release = GitHub.open_api("#{GitHub::API_URL}/repos/#{owner}/#{repo}/releases/tags/#{tag}"))
-            problem "#{tag} is a GitHub prerelease" if release["prerelease"]
-            problem "#{tag} is a GitHub draft" if release["draft"]
+            if release["prerelease"] && !GITHUB_PRERELEASE_ALLOWLIST.include?(formula.name)
+              problem "#{tag} is a GitHub prerelease"
+            elsif release["draft"]
+              problem "#{tag} is a GitHub draft"
+            end
           end
         rescue GitHub::HTTPNotFoundError
           # No-op if we can't find the release.

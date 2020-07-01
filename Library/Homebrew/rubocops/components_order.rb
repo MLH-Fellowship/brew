@@ -24,7 +24,8 @@ module RuboCop
             [{ name: :mirror,    type: :method_call }],
             [{ name: :version,   type: :method_call }],
             [{ name: :sha256,    type: :method_call }],
-            [{ name: :revision,  type: :method_call }],
+            [{ name: :license, type: :method_call }],
+            [{ name: :revision, type: :method_call }],
             [{ name: :version_scheme, type: :method_call }],
             [{ name: :head,      type: :method_call }],
             [{ name: :stable,    type: :block_call }],
@@ -226,11 +227,10 @@ module RuboCop
               next if succeeding_component.empty?
 
               offensive_nodes = check_precedence(preceding_component, succeeding_component)
-              break if offensive_nodes
+              return [present_components, offensive_nodes] if offensive_nodes
             end
           end
-
-          [present_components, offensive_nodes]
+          nil
         end
 
         # Method to format message for reporting component precedence violations
