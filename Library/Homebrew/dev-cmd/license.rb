@@ -5,6 +5,8 @@ require 'licensee'
 require 'set'
 require "commands"
 require "cli/parser"
+require 'parser/current'
+require 'unparser'
 
 module GitHub
 
@@ -32,12 +34,12 @@ module GitHub
       @formula_name = formula_name
     end
 
-    def fetch_license(uri_string=nil)
+    def fetch_license(api_key, uri_string=nil)
       uri_string ||= "https://api.github.com/repos/#{@full_name}"
       uri = URI(uri_string)
       req = Net::HTTP::Get.new(uri)
       req['Accept'] = 'application/vnd.github.v3+json'
-      req['Authorization'] = "token "
+      req['Authorization'] = "token #{api_key}"
 
       res = Net::HTTP.start(uri.hostname, uri.port, :use_ssl => true) { |http|
         http.request(req)
@@ -85,6 +87,8 @@ module Homebrew
              description: "Fetch license information and append to `report.csv`."
       switch "--rewrite",
              description: "Rewrite existing formula with license information described in `report.csv`."
+      flag   "--githubkey=",
+             description: "GitHub API key"
       switch :verbose
       switch :debug
       conflicts "--fetch", "--rewrite"
@@ -95,6 +99,7 @@ module Homebrew
     license_args.parse
 
     if args.fetch?
+      puts "GitHub API Key: #{args.githubkey}"
       fetch
     elsif args.rewrite?
       rewrite
@@ -131,7 +136,7 @@ module Homebrew
       elsif (github_repo = match_github_repo f)
         oh1 "Fetching GitHub license for #{f}"
 
-        github_repo.fetch_license
+        github_repo.fetch_license args.githubkey
         write_report(report_file, f, github_repo.license, "github")
 
         stat_processed += 1
@@ -193,6 +198,13 @@ module Homebrew
   end
 
   def rewrite
+    Parser::Builders::Default.emit_lambda = true
+    Parser::Builders::Default.emit_procarg0 = true
+    Parser::Builders::Default.emit_encoding = true
+    Parser::Builders::Default.emit_index = true
+    Parser::Builders::Default.emit_arg_inside_procarg0 = true
+    Parser::Builders::Default.emit_forward_arg = true
+
     report_file = File.open "report.csv", "r"
     name_to_license = Hash.new
     report_file.readlines.each do |line|
@@ -210,19 +222,44 @@ module Homebrew
   def rewrite_formula(name_to_license, formula)
     return unless name_to_license.has_key?(formula.name)
 
+    formula_contents = File.open(formula.path).read
+    ast = Parser::CurrentRuby.parse formula_contents
+    body = bfs(ast) { |node| node.type == :class }.children.last
+    odie "Fail: #{formula.name}: #{ast}" unless body.type == :begin
+
+    after =   body.children.find { |node| node.type == :send && node.children[1] == :sha256 }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :version }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :mirror }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :url }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :homepage }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :desc }
+    after ||= body.children.find { |node| node.type == :send && node.children[1] == :include }
+
     formula_file = File.open formula.path
     lines = formula_file.readlines
     formula_file.close
 
-    return if (lines.any? { |l| l.match?(/.*license\s*".*"\n/) })
+    return if lines.any? { |line| line.match /\A\s\slicense/ }
 
-    if (desc_index = lines.find_index { |line| line.match?(/.*desc\s*".*"\n/) })
-      lines.insert(desc_index + 1, "  license \"#{name_to_license[formula.name]}\"\n")
+    if after
+      lines.insert(after.location.expression.end.line, "  license \"#{name_to_license[formula.name]}\"\n")
 
       formula_file = File.open formula.path, "w"
       lines.each { |line| formula_file.write line }
       formula_file.close
+    else
+      ofail "Could not find after node"
     end
+  end
+
+  def bfs(node)
+    q = [node]
+    until q.empty?
+      n = q.shift
+      return n if yield n
+      q += n.children
+    end
+    nil
   end
 
 end
