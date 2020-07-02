@@ -7,6 +7,20 @@ require "commands"
 require "cli/parser"
 require 'parser/current'
 require 'unparser'
+require 'dev-cmd/audit'
+require "formula"
+require "formula_versions"
+require "utils/curl"
+require "utils/notability"
+require "extend/ENV"
+require "formula_cellar_checks"
+require "cmd/search"
+require "style"
+require "date"
+require "missing_formula"
+require "digest"
+require "cli/parser"
+require "json"
 
 module GitHub
 
@@ -87,6 +101,8 @@ module Homebrew
              description: "Fetch license information and append to `report.csv`."
       switch "--rewrite",
              description: "Rewrite existing formula with license information described in `report.csv`."
+      switch "--audit",
+             description: "Audit every formula in `report.csv`"
       flag   "--githubkey=",
              description: "GitHub API key"
       switch :verbose
@@ -103,6 +119,42 @@ module Homebrew
       fetch
     elsif args.rewrite?
       rewrite
+    elsif args.audit?
+      spdx = HOMEBREW_LIBRARY_PATH/"data/spdx.json"
+      spdx_data = JSON.parse(spdx.read)
+      options = {
+        new_formula: false,
+        strict:      true,
+        online:      false,
+        git:         false,
+        spdx_data:   spdx_data,
+      }
+
+      report_file = File.open "report.csv", "r"
+      report_file.readlines.each do |line|
+        components = line.split(",")
+        unless components[1] == "" || components[1] == "NOASSERTION"
+          begin
+            f = Formulary.factory(components[0])
+            style_results = Style.check_style_json([f.path], {fix: false})
+            options[:style_offenses] = style_results.file_offenses(f.path) if style_results
+
+            fa = FormulaAuditor.new(f, options)
+            fa.audit
+            next if fa.problems.empty? && fa.new_formula_problems.empty?
+            fa.problems
+            problem_lines = format_problem_lines(fa.problems)
+            if args.display_filename?
+              puts problem_lines.map { |s| "#{f.path}: #{s}" }
+            else
+              puts "#{f.full_name}:", problem_lines.map { |s| "  #{s}" }
+            end
+          rescue FormulaUnavailableError => e
+             e.message
+          end
+        end
+      end
+      report_file.close
     else
       odie "Add a command"
     end
