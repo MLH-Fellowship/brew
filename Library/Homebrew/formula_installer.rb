@@ -1015,9 +1015,10 @@ class FormulaInstaller
 
     return if only_deps?
 
+    result = "some weird string"
     if pour_bottle?(warn: true)
       begin
-        downloader.fetch
+        result = downloader.fetch
       rescue Exception => e # rubocop:disable Lint/RescueException
         raise if Homebrew::EnvConfig.developer? ||
                  Homebrew::EnvConfig.no_bottle_source_fallback? ||
@@ -1029,7 +1030,7 @@ class FormulaInstaller
         fetch_dependencies
       end
     end
-    return if pour_bottle?
+    return result if pour_bottle?
 
     formula.fetch_patches
     formula.resources.each(&:fetch)

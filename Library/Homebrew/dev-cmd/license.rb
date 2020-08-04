@@ -48,7 +48,7 @@ module GitHub
       @formula_name = formula_name
     end
 
-    def fetch_license(api_key, uri_string=nil)
+    def fetch_license(api_key, uri_string = nil)
       uri_string ||= "https://api.github.com/repos/#{@full_name}"
       uri = URI(uri_string)
       req = Net::HTTP::Get.new(uri)
@@ -90,7 +90,6 @@ module Homebrew
   module_function
 
   def license_args
-
     Homebrew::CLI::Parser.new do
       usage_banner <<~EOS
         `license` [<options>]
@@ -103,8 +102,10 @@ module Homebrew
              description: "Rewrite existing formula with license information described in `report.csv`."
       switch "--audit",
              description: "Audit every formula in `report.csv`"
-      flag   "--githubkey=",
-             description: "GitHub API key"
+      flag "--tap=",
+           description: "The tap to fetch formula from"
+      flag "--githubkey=",
+           description: "GitHub API key"
       switch :verbose
       switch :debug
       conflicts "--fetch", "--rewrite"
@@ -112,22 +113,30 @@ module Homebrew
   end
 
   def license
-    license_args.parse
+    args = license_args.parse
+
+    formulae = if args.tap
+      Tap.fetch(args.tap).formula_names.map do |name|
+        Formulary.factory name
+      end
+    else
+      Formula.to_a
+    end
 
     if args.fetch?
       puts "GitHub API Key: #{args.githubkey}"
-      fetch
+      fetch formulae, args.githubkey
     elsif args.rewrite?
-      rewrite
+      rewrite formulae
     elsif args.audit?
-      spdx = HOMEBREW_LIBRARY_PATH/"data/spdx.json"
+      spdx = HOMEBREW_LIBRARY_PATH / "data/spdx.json"
       spdx_data = JSON.parse(spdx.read)
       options = {
         new_formula: false,
-        strict:      true,
-        online:      false,
-        git:         false,
-        spdx_data:   spdx_data,
+        strict: true,
+        online: false,
+        git: false,
+        spdx_data: spdx_data,
       }
 
       report_file = File.open "report.csv", "r"
@@ -150,7 +159,7 @@ module Homebrew
               puts "#{f.full_name}:", problem_lines.map { |s| "  #{s}" }
             end
           rescue FormulaUnavailableError => e
-             e.message
+            e.message
           end
         end
       end
@@ -160,14 +169,12 @@ module Homebrew
     end
   end
 
-  def fetch
+  def fetch(all_considered_formula, github_key)
     report_file = File.open "report.csv", "a+"
 
     already_processed = Set.new(report_file.readlines.map do |line|
       line.split(",")[0].chomp
     end)
-
-    all_considered_formula = Formula.to_a
 
     stat_processed = 0
     stat_start = Time.now
@@ -188,7 +195,7 @@ module Homebrew
       elsif (github_repo = match_github_repo f)
         oh1 "Fetching GitHub license for #{f}"
 
-        github_repo.fetch_license args.githubkey
+        github_repo.fetch_license github_key
         write_report(report_file, f, github_repo.license, "github")
 
         stat_processed += 1
@@ -200,6 +207,7 @@ module Homebrew
         fi.ignore_deps = true
         fi.prelude
         compressed_fp = fi.fetch
+        puts compressed_fp
         if extract(compressed_fp.to_s)
           path = "#{File.dirname(compressed_fp)}/#{f.name}/#{f.version}/"
           license = Licensee.license path
@@ -207,8 +215,7 @@ module Homebrew
 
           stat_processed += 1
         else
-          opoo "Unable to extract #{f}"
-          puts compressed_fp
+          opoo "Unable to extract #{File.dirname(compressed_fp.to_s)}"
 
           stat_total -= 1
         end
@@ -232,8 +239,8 @@ module Homebrew
 
   def extract(path)
     Dir.chdir File.dirname(path) do
-      return system("tar -xf #{path}") if path.end_with?(".bz2", ".gz", ".xz", ".tgz")
-      return system("unzip -nq #{path}") if path.end_with?(".zip", ".jar")
+      return system("tar -xf '#{path}'") if path.end_with?(".bz2", ".gz", ".xz", ".tgz")
+      return system("unzip -nq '#{path}'") if path.end_with?(".zip", ".jar")
       return false
     end
   end
@@ -249,7 +256,7 @@ module Homebrew
     GitHub::Repo.new("#{user}/#{repo}", formula_name: f.name)
   end
 
-  def rewrite
+  def rewrite(formulae)
     Parser::Builders::Default.emit_lambda = true
     Parser::Builders::Default.emit_procarg0 = true
     Parser::Builders::Default.emit_encoding = true
@@ -265,7 +272,7 @@ module Homebrew
     end
     report_file.close
 
-    Formula.each do |f|
+    formulae.each do |f|
       puts f.name
       rewrite_formula name_to_license, f
     end
@@ -279,7 +286,7 @@ module Homebrew
     body = bfs(ast) { |node| node.type == :class }.children.last
     odie "Fail: #{formula.name}: #{ast}" unless body.type == :begin
 
-    after =   body.children.find { |node| node.type == :send && node.children[1] == :sha256 }
+    after = body.children.find { |node| node.type == :send && node.children[1] == :sha256 }
     after ||= body.children.find { |node| node.type == :send && node.children[1] == :version }
     after ||= body.children.find { |node| node.type == :send && node.children[1] == :mirror }
     after ||= body.children.find { |node| node.type == :send && node.children[1] == :url }
