@@ -61,8 +61,7 @@ module Homebrew
       comma_array "--except-cops",
                   description: "Specify a comma-separated <cops> list to skip checking for violations of the listed "\
                                "RuboCop cops."
-      switch :verbose
-      switch :debug
+
       conflicts "--only", "--except"
       conflicts "--only-cops", "--except-cops", "--strict"
       conflicts "--only-cops", "--except-cops", "--only"
@@ -73,7 +72,7 @@ module Homebrew
   end
 
   def audit
-    audit_args.parse
+    args = audit_args.parse
 
     Homebrew.auditing = true
     inject_dump_stats!(FormulaAuditor, /^audit_/) if args.audit_debug?
@@ -127,6 +126,7 @@ module Homebrew
       }
       options[:style_offenses] = style_results.file_offenses(f.path) if style_results
       options[:display_cop_names] = args.display_cop_names?
+      options[:build_stable] = args.build_stable?
 
       fa = FormulaAuditor.new(f, options)
       fa.audit
@@ -207,6 +207,7 @@ module Homebrew
       @new_formula = options[:new_formula] && !@versioned_formula
       @strict = options[:strict]
       @online = options[:online]
+      @build_stable = options[:build_stable]
       @git = options[:git]
       @display_cop_names = options[:display_cop_names]
       @only = options[:only]
@@ -231,11 +232,6 @@ module Homebrew
     end
 
     def audit_file
-      # TODO: check could be in RuboCop
-      if text.to_s.match?(/inreplace [^\n]* do [^\n]*\n[^\n]*\.gsub![^\n]*\n\ *end/m)
-        problem "'inreplace ... do' was used for a single substitution (use the non-block form instead)."
-      end
-
       if formula.core_formula? && @versioned_formula
         unversioned_formula = begin
           # build this ourselves as we want e.g. homebrew/core to be present
@@ -253,7 +249,7 @@ module Homebrew
           unversioned_name = unversioned_formula.basename(".rb")
           problem "#{formula} is versioned but no #{unversioned_name} formula exists"
         end
-      elsif Homebrew.args.build_stable? && formula.stable? &&
+      elsif @build_stable && formula.stable? &&
             !(versioned_formulae = formula.versioned_formulae).empty?
         versioned_aliases = formula.aliases.grep(/.@\d/)
         _, last_alias_version = versioned_formulae.map(&:name).last.split("@")
@@ -272,6 +268,12 @@ module Homebrew
           valid_alias_names.map! { |a| "#{formula.tap}/#{a}" }
         end
 
+        # Fix naming based on what people expect.
+        if alias_name_major_minor == "adoptopenjdk@1.8"
+          valid_alias_names << "adoptopenjdk@8"
+          valid_alias_names.delete "adoptopenjdk@1"
+        end
+
         valid_versioned_aliases = versioned_aliases & valid_alias_names
         invalid_versioned_aliases = versioned_aliases - valid_alias_names
 
@@ -287,7 +289,7 @@ module Homebrew
           end
         end
 
-        unless invalid_versioned_aliases.empty?
+        if invalid_versioned_aliases.present?
           problem <<~EOS
             Formula has invalid versioned aliases:
               #{invalid_versioned_aliases.join("\n  ")}
@@ -325,29 +327,38 @@ module Homebrew
       problem "Formula name conflicts with existing core formula."
     end
 
-    USES_FROM_MACOS_ALLOWLIST = %w[
+    PROVIDED_BY_MACOS_DEPENDS_ON_ALLOWLIST = %w[
       apr
       apr-util
+      libressl
       openblas
       openssl@1.1
     ].freeze
 
     def audit_license
       if formula.license.present?
-        if @spdx_data["licenses"].any? { |lic| lic["licenseId"] == formula.license }
-          return unless @online
+        non_standard_licenses = formula.license.map do |license|
+          next if license == :public_domain
+          next if @spdx_data["licenses"].any? { |spdx| spdx["licenseId"] == license }
 
-          user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
-          return if user.blank?
+          license
+        end.compact
 
-          github_license = GitHub.get_repo_license(user, repo)
-          return if github_license && (github_license == formula.license)
-
-          problem "License mismatch - GitHub license is: #{github_license}, "\
-                  "but Formulae license states: #{formula.license}."
-        else
-          problem "#{formula.license} is not a standard SPDX license."
+        if non_standard_licenses.present?
+          problem "Formula #{formula.name} contains non-standard SPDX licenses: #{non_standard_licenses}."
         end
+
+        return unless @online
+
+        user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
+        return if user.blank?
+
+        github_license = GitHub.get_repo_license(user, repo)
+        return if github_license && (formula.license + ["NOASSERTION"]).include?(github_license)
+
+        problem "License mismatch - GitHub license is: #{Array(github_license)}, "\
+                "but Formulae license states: #{formula.license}."
+
       elsif @new_formula
         problem "No license specified for package."
       end
@@ -379,16 +390,17 @@ module Homebrew
           end
 
           if self.class.aliases.include?(dep.name) &&
-             (dep_f.core_formula? || !dep_f.versioned_formula?)
+             dep_f.core_formula? && !dep_f.versioned_formula?
             problem "Dependency '#{dep.name}' from homebrew/core is an alias; " \
             "use the canonical name '#{dep.to_formula.full_name}'."
           end
 
-          if @new_formula &&
+          if @core_tap &&
+             @new_formula &&
              dep_f.keg_only? &&
              dep_f.keg_only_reason.provided_by_macos? &&
              dep_f.keg_only_reason.applicable? &&
-             !USES_FROM_MACOS_ALLOWLIST.include?(dep.name)
+             !PROVIDED_BY_MACOS_DEPENDS_ON_ALLOWLIST.include?(dep.name)
             new_formula_problem(
               "Dependency '#{dep.name}' is provided by macOS; " \
               "please replace 'depends_on' with 'uses_from_macos'.",
@@ -460,6 +472,7 @@ module Homebrew
       end
     end
 
+    # openssl@1.1 only needed for Linux
     VERSIONED_KEG_ONLY_ALLOWLIST = %w[
       autoconf@2.13
       bash-completion@2
@@ -467,6 +480,7 @@ module Homebrew
       libsigc++@2
       lua@5.1
       numpy@1.16
+      openssl@1.1
       python@3.8
     ].freeze
 
@@ -482,7 +496,9 @@ module Homebrew
         end
       end
 
-      return if VERSIONED_KEG_ONLY_ALLOWLIST.include?(formula.name) || formula.name.start_with?("gcc@")
+      return if VERSIONED_KEG_ONLY_ALLOWLIST.include?(formula.name)
+      return if formula.name.start_with?("adoptopenjdk@")
+      return if formula.name.start_with?("gcc@")
 
       problem "Versioned formulae in homebrew/core should use `keg_only :versioned_formula`"
     end
@@ -527,6 +543,30 @@ module Homebrew
       problem "Formulae in homebrew/core should not use `bottle :disabled`"
     end
 
+    def audit_github_repository_archived
+      return if formula.deprecated?
+
+      user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @online
+      return if user.blank?
+
+      metadata = SharedAudits.github_repo_data(user, repo)
+      return if metadata.nil?
+
+      problem "GitHub repo is archived" if metadata["archived"]
+    end
+
+    def audit_gitlab_repository_archived
+      return if formula.deprecated?
+
+      user, repo = get_repo_data(%r{https?://gitlab\.com/([^/]+)/([^/]+)/?.*}) if @online
+      return if user.blank?
+
+      metadata = SharedAudits.gitlab_repo_data(user, repo)
+      return if metadata.nil?
+
+      problem "GitLab repo is archived" if metadata["archived"]
+    end
+
     def audit_github_repository
       user, repo = get_repo_data(%r{https?://github\.com/([^/]+)/([^/]+)/?.*}) if @new_formula
 
@@ -564,6 +604,7 @@ module Homebrew
 
       _, user, repo = *regex.match(formula.stable.url) if formula.stable
       _, user, repo = *regex.match(formula.homepage) unless user
+      _, user, repo = *regex.match(formula.head.url) if !user && formula.head
       return if !user || !repo
 
       repo.delete_suffix!(".git")
@@ -576,12 +617,13 @@ module Homebrew
       imagemagick@6
     ].freeze
 
-    THROTTLED_DENYLIST = {
-      "aws-sdk-cpp" => "10",
-      "awscli@1"    => "10",
-      "balena-cli"  => "10",
-      "quicktype"   => "10",
-      "vim"         => "50",
+    THROTTLED_FORMULAE = {
+      "aws-sdk-cpp" => 10,
+      "awscli@1"    => 10,
+      "balena-cli"  => 10,
+      "gatsby-cli"  => 10,
+      "quicktype"   => 10,
+      "vim"         => 50,
     }.freeze
 
     UNSTABLE_ALLOWLIST = {
@@ -610,7 +652,10 @@ module Homebrew
       "libepoxy"            => "1.5",
     }.freeze
 
-    GITHUB_PRERELEASE_ALLOWLIST = %w[cake].freeze
+    GITHUB_PRERELEASE_ALLOWLIST = {
+      "gitless"      => "0.8.8",
+      "telegram-cli" => "1.3.1",
+    }.freeze
 
     # version_prefix = stable_version_string.sub(/\d+$/, "")
     # version_prefix = stable_version_string.split(".")[0..1].join(".")
@@ -667,17 +712,8 @@ module Homebrew
       problem "Formulae in homebrew/core should not have a `devel` spec" if formula.devel
 
       if formula.head && @versioned_formula
-        head_spec_message = "Formulae should not have a `HEAD` spec"
+        head_spec_message = "Versioned formulae should not have a `HEAD` spec"
         problem head_spec_message unless VERSIONED_HEAD_SPEC_ALLOWLIST.include?(formula.name)
-      end
-
-      THROTTLED_DENYLIST.each do |f, v|
-        next if formula.stable.nil?
-
-        version = formula.stable.version.to_s.split(".").last.to_i
-        if f == formula.name && version.modulo(v.to_i).nonzero?
-          problem "should only be updated every #{v} releases on multiples of #{v}"
-        end
       end
 
       stable = formula.stable
@@ -689,6 +725,12 @@ module Homebrew
       _, stable_url_minor_version, = stable_url_version.to_s
                                                        .split(".", 3)
                                                        .map(&:to_i)
+
+      formula_suffix = stable_version_string.split(".").last.to_i
+      throttled_rate = THROTTLED_FORMULAE[formula.name]
+      if throttled_rate && formula_suffix.modulo(throttled_rate).nonzero?
+        problem "should only be updated every #{throttled_rate} releases on multiples of #{throttled_rate}"
+      end
 
       case (url = stable.url)
       when /[\d._-](alpha|beta|rc\d)/
@@ -747,11 +789,11 @@ module Homebrew
       current_revision = formula.revision
 
       previous_version = nil
-      previous_checksum = nil
       previous_version_scheme = nil
       previous_revision = nil
 
       newest_committed_version = nil
+      newest_committed_checksum = nil
       newest_committed_revision = nil
 
       fv.rev_list("origin/master") do |rev|
@@ -765,6 +807,7 @@ module Homebrew
           previous_revision = f.revision
 
           newest_committed_version ||= previous_version
+          newest_committed_checksum ||= previous_checksum
           newest_committed_revision ||= previous_revision
         end
 
@@ -772,7 +815,7 @@ module Homebrew
       end
 
       if current_version == previous_version &&
-         current_checksum != previous_checksum
+         current_checksum != newest_committed_checksum
         problem(
           "stable sha256 changed without the version also changing; " \
           "please create an issue upstream to rule out malicious " \
@@ -826,82 +869,6 @@ module Homebrew
           end
         end
       end
-    end
-
-    def audit_lines
-      text.without_patch.split("\n").each_with_index do |line, lineno|
-        line_problems(line, lineno + 1)
-      end
-    end
-
-    def line_problems(line, _lineno)
-      # Check for string interpolation of single values.
-      if line =~ /(system|inreplace|gsub!|change_make_var!).*[ ,]"#\{([\w.]+)\}"/
-        # TODO: check could be in RuboCop
-        problem "Don't need to interpolate \"#{Regexp.last_match(2)}\" with #{Regexp.last_match(1)}"
-      end
-
-      # Check for string concatenation; prefer interpolation
-      if line =~ /(#\{\w+\s*\+\s*['"][^}]+\})/
-        # TODO: check could be in RuboCop
-        problem "Try not to concatenate paths in string interpolation:\n   #{Regexp.last_match(1)}"
-      end
-
-      # Prefer formula path shortcuts in Pathname+
-      if line =~ %r{\(\s*(prefix\s*\+\s*(['"])(bin|include|libexec|lib|sbin|share|Frameworks)[/'"])}
-        # TODO: check could be in RuboCop
-        problem(
-          "\"(#{Regexp.last_match(1)}...#{Regexp.last_match(2)})\" should" \
-          " be \"(#{Regexp.last_match(3).downcase}+...)\"",
-        )
-      end
-
-      # TODO: check could be in RuboCop
-      problem "Use separate make calls" if line.include?("make && make")
-
-      if line =~ /JAVA_HOME/i &&
-         [formula.name, *formula.deps.map(&:name)].none? { |name| name.match?(/^openjdk(@|$)/) } &&
-         formula.requirements.none? { |req| req.is_a?(JavaRequirement) }
-        # TODO: check could be in RuboCop
-        problem "Use `depends_on :java` to set JAVA_HOME"
-      end
-
-      return unless @strict
-
-      # TODO: check could be in RuboCop
-      problem "`env :userpaths` in formulae is deprecated" if line.include?("env :userpaths")
-
-      if line =~ /system ((["'])[^"' ]*(?:\s[^"' ]*)+\2)/
-        bad_system = Regexp.last_match(1)
-        unless %w[| < > & ; *].any? { |c| bad_system.include? c }
-          good_system = bad_system.gsub(" ", "\", \"")
-          # TODO: check could be in RuboCop
-          problem "Use `system #{good_system}` instead of `system #{bad_system}` "
-        end
-      end
-
-      # TODO: check could be in RuboCop
-      problem "`#{Regexp.last_match(1)}` is now unnecessary" if line =~ /(require ["']formula["'])/
-
-      if line.match?(%r{#\{share\}/#{Regexp.escape(formula.name)}[/'"]})
-        # TODO: check could be in RuboCop
-        problem "Use \#{pkgshare} instead of \#{share}/#{formula.name}"
-      end
-
-      if !@core_tap && line =~ /depends_on .+ if build\.with(out)?\?\(?["']\w+["']\)?/
-        # TODO: check could be in RuboCop
-        problem "`Use :optional` or `:recommended` instead of `#{Regexp.last_match(0)}`"
-      end
-
-      if line =~ %r{share(\s*[/+]\s*)(['"])#{Regexp.escape(formula.name)}(?:\2|/)}
-        # TODO: check could be in RuboCop
-        problem "Use pkgshare instead of (share#{Regexp.last_match(1)}\"#{formula.name}\")"
-      end
-
-      return unless @core_tap
-
-      # TODO: check could be in RuboCop
-      problem "`env :std` in homebrew/core formulae is deprecated" if line.include?("env :std")
     end
 
     def audit_reverse_migration
@@ -971,8 +938,7 @@ module Homebrew
   end
 
   class ResourceAuditor
-    attr_reader :name, :version, :checksum, :url, :mirrors, :using, :specs, :owner
-    attr_reader :spec_name, :problems
+    attr_reader :name, :version, :checksum, :url, :mirrors, :using, :specs, :owner, :spec_name, :problems
 
     def initialize(resource, spec_name, options = {})
       @name     = resource.name

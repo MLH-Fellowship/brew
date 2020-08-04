@@ -4,6 +4,7 @@ require "timeout"
 
 require "utils/user"
 require "cask/artifact/abstract_artifact"
+require "cask/pkg"
 require "extend/hash_validator"
 using HashValidator
 
@@ -34,7 +35,7 @@ module Cask
         directives.assert_valid_keys!(*ORDERED_DIRECTIVES)
 
         super(cask)
-        directives[:signal] = [*directives[:signal]].flatten.each_slice(2).to_a
+        directives[:signal] = Array(directives[:signal]).flatten.each_slice(2).to_a
         @directives = directives
 
         return unless directives.key?(:kext)
@@ -49,7 +50,7 @@ module Cask
       end
 
       def summarize
-        to_h.flat_map { |key, val| [*val].map { |v| "#{key.inspect} => #{v.inspect}" } }.join(", ")
+        to_h.flat_map { |key, val| Array(val).map { |v| "#{key.inspect} => #{v.inspect}" } }.join(", ")
       end
 
       private

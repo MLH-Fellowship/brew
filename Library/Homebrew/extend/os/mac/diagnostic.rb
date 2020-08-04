@@ -12,6 +12,7 @@ module Homebrew
           check_xcode_minimum_version
           check_clt_minimum_version
           check_if_xcode_needs_clt_installed
+          check_if_supported_sdk_available
         ].freeze
       end
 
@@ -190,7 +191,8 @@ module Homebrew
       def check_xcode_license_approved
         # If the user installs Xcode-only, they have to approve the
         # license or no "xc*" tool will work.
-        return unless `/usr/bin/xcrun clang 2>&1` =~ /license/ && !$CHILD_STATUS.success?
+        return unless `/usr/bin/xcrun clang 2>&1`.include?("license")
+        return if $CHILD_STATUS.success?
 
         <<~EOS
           You have not agreed to the Xcode license.
@@ -355,6 +357,25 @@ module Homebrew
           You have the following deprecated, cask taps tapped:
             #{tapped_caskroom_taps.join("\n  ")}
           Untap them with `brew untap`.
+        EOS
+      end
+
+      def check_if_supported_sdk_available
+        return unless MacOS.sdk_root_needed?
+        return if MacOS.sdk
+
+        locator = MacOS.sdk_locator
+
+        source = if locator.source == :clt
+          "CLT"
+        else
+          "Xcode"
+        end
+
+        <<~EOS
+          Your #{source} does not support macOS #{MacOS.version}.
+          It is either outdated or was modified.
+          Please update your #{source} or delete it if no updates are available.
         EOS
       end
     end

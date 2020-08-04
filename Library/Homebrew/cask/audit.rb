@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "cask/denylist"
-require "cask/checkable"
 require "cask/download"
 require "digest"
 require "utils/curl"
@@ -10,19 +9,18 @@ require "utils/notability"
 
 module Cask
   class Audit
-    include Checkable
     extend Predicable
 
     attr_reader :cask, :commit_range, :download
 
     attr_predicate :appcast?
 
-    def initialize(cask, appcast: false, download: false,
+    def initialize(cask, appcast: false, download: false, quarantine: nil,
                    token_conflicts: false, online: false, strict: false,
                    new_cask: false, commit_range: nil, command: SystemCommand)
       @cask = cask
       @appcast = appcast
-      @download = download
+      @download = Download.new(cask, quarantine: quarantine) if download
       @online = online
       @strict = strict
       @new_cask = new_cask
@@ -62,12 +60,56 @@ module Cask
       self
     end
 
-    def success?
-      !(errors? || warnings?)
+    def errors
+      @errors ||= []
     end
 
-    def summary_header
-      "audit for #{cask}"
+    def warnings
+      @warnings ||= []
+    end
+
+    def add_error(message)
+      errors << message
+    end
+
+    def add_warning(message)
+      warnings << message
+    end
+
+    def errors?
+      errors.any?
+    end
+
+    def warnings?
+      warnings.any?
+    end
+
+    def result
+      if errors?
+        Formatter.error("failed")
+      elsif warnings?
+        Formatter.warning("warning")
+      else
+        Formatter.success("passed")
+      end
+    end
+
+    def summary
+      summary = ["audit for #{cask}: #{result}"]
+
+      errors.each do |error|
+        summary << " #{Formatter.error("-")} #{error}"
+      end
+
+      warnings.each do |warning|
+        summary << " #{Formatter.warning("-")} #{warning}"
+      end
+
+      summary.join("\n")
+    end
+
+    def success?
+      !(errors? || warnings?)
     end
 
     private

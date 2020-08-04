@@ -290,6 +290,8 @@ If *`formula`* is provided, summarise the paths within its current keg.
   Only show formulae with multiple versions installed.
 * `--pinned`:
   Show the versions of pinned formulae, or only the specified (pinned) formulae if *`formula`* are provided. See also `pin`, `unpin`.
+* `--cask`:
+  List casks
 * `-1`:
   Force output to be one entry per line. This is the default when output is not to a terminal.
 * `-l`:
@@ -310,8 +312,10 @@ no formula is provided.
   Also print diffstat from commit.
 * `--oneline`:
   Print only one line per commit.
-* `-1`, `--max-count`:
-  Print only one or a specified number of commits.
+* `-1`:
+  Print only one commit.
+* `-n`, `--max-count`:
+  Print only a specified number of commits.
 
 ### `migrate` [*`options`*] *`formula`*
 
@@ -354,9 +358,15 @@ otherwise.
 * `-v`, `--verbose`:
   Include detailed version information.
 * `--json`:
-  Print output in JSON format. Currently the default and only accepted value for *`version`* is `v1`. See the docs for examples of using the JSON output: <https://docs.brew.sh/Querying-Brew>
+  Print output in JSON format. There are two versions: v1 and v2. v1 is deprecated and is currently the default if no version is specified. v2 prints outdated formulae and casks. 
 * `--fetch-HEAD`:
   Fetch the upstream repository to detect if the HEAD installation of the formula is outdated. Otherwise, the repository's HEAD will only be checked for updates when a new stable or development version has been released.
+* `--greedy`:
+  Print outdated casks with `auto_updates` or `version :latest`.
+* `--formula`:
+  Treat all arguments as formulae.
+* `--cask`:
+  Treat all arguments as casks.
 
 ### `pin` *`formula`*
 
@@ -377,7 +387,7 @@ items or checking if any current formulae/casks have Ruby issues.
 * `--aliases`:
   Verify any alias symlinks in each tap.
 * `--syntax`:
-  Syntax-check all of Homebrew's Ruby files.
+  Syntax-check all of Homebrew's Ruby files (if no `*`tap`*` is passed).
 
 ### `reinstall` [*`options`*] *`formula`*
 
@@ -509,12 +519,16 @@ also `pin`.
 
 Remove a tapped formula repository.
 
-### `update`, `up` [*`options`*]
+### `update` [*`options`*]
 
 Fetch the newest version of Homebrew and all formulae from GitHub using `git`(1) and perform any necessary migrations.
 
 * `--merge`:
   Use `git merge` to apply updates (rather than `git rebase`).
+* `--preinstall`:
+  Run on auto-updates (e.g. before `brew install`). Skips some slower steps.
+* `-f`, `--force`:
+  Always do a slower, full update check (even if unnecessary).
 
 ### `update-reset` [*`repository`*]
 
@@ -554,13 +568,15 @@ the upgraded formulae or, every 30 days, for all formulae.
   Print install times for each formula at the end of the run.
 * `-n`, `--dry-run`:
   Show what would be upgraded, but do not actually upgrade anything.
+* `--greedy`:
+  Upgrade casks with `auto_updates` or `version :latest`
 
 ### `uses` [*`options`*] *`formula`*
 
-Show formulae that specify *`formula`* as a dependency. When given multiple
-formula arguments, show the intersection of formulae that use *`formula`*. By
-default, `uses` shows all formulae that specify *`formula`* as a required or
-recommended dependency for their stable builds.
+Show formulae that specify *`formula`* as a dependency (i.e. show dependents of
+*`formula`*). When given multiple formula arguments, show the intersection of
+formulae that use *`formula`*. By default, `uses` shows all formulae that specify
+*`formula`* as a required or recommended dependency for their stable builds.
 
 * `--recursive`:
   Resolve more than one level of dependencies.
@@ -593,6 +609,13 @@ If *`formula`* is provided, display the file or directory used to cache *`formul
   Only show cache files for formulae.
 * `--cask`:
   Only show cache files for casks.
+
+### `--caskroom` [*`cask`*]
+
+Display Homebrew's Caskroom path.
+
+If *`cask`* is provided, display the location in the Caskroom where *`cask`* would
+be installed, without any sort of versioned directory as the last path.
 
 ### `--cellar` [*`formula`*]
 
@@ -705,15 +728,18 @@ be specified. A best effort to determine the *`SHA-256`* and *`formula`* name wi
 be made if either or both values are not supplied by the user.
 
 If a *`tag`* is specified, the Git commit *`revision`* corresponding to that tag
-must also be specified.
+should also be specified. A best effort to determine the *`revision`* will be made
+if the value is not supplied by the user.
+
+If a *`version`* is specified, a best effort to determine the *`URL`* and *`SHA-256`*
+or the *`tag`* and *`revision`* will be made if both values are not supplied by the
+user.
 
 *Note:* this command cannot be used to transition a formula from a
 URL-and-SHA-256 style specification into a tag-and-revision style specification,
 nor vice versa. It must use whichever style specification the formula already
 uses.
 
-* `--devel`:
-  Bump the development rather than stable version. The development spec must already exist.
 * `-n`, `--dry-run`:
   Print what would be done rather than doing it.
 * `--write`:
@@ -740,6 +766,8 @@ uses.
   Specify the new git commit *`tag`* for the formula.
 * `--revision`:
   Specify the new git commit *`revision`* corresponding to the specified *`tag`*.
+* `-f`, `--force`:
+  Ignore duplicate open PRs. Remove all mirrors if --mirror= was not specified.
 
 ### `bump-revision` [*`options`*] *`formula`*
 
@@ -764,8 +792,7 @@ Display the path to the file being used when invoking `brew` *`cmd`*.
 Generate a formula for the downloadable file at *`URL`* and open it in the editor.
 Homebrew will attempt to automatically derive the formula name and version, but
 if it fails, you'll have to make your own template. The `wget` formula serves as
-a simple example. For the complete API, see:
-<http://www.rubydoc.info/github/Homebrew/brew/master/Formula>
+a simple example. For the complete API, see: <https://rubydoc.brew.sh/Formula>
 
 * `--autotools`:
   Create a basic template for an Autotools-style build.
@@ -777,6 +804,8 @@ a simple example. For the complete API, see:
   Create a basic template for a Go build.
 * `--meson`:
   Create a basic template for a Meson-style build.
+* `--node`:
+  Create a basic template for a Node build.
 * `--perl`:
   Create a basic template for a Perl build.
 * `--python`:
@@ -797,6 +826,8 @@ a simple example. For the complete API, see:
   Explicitly set the *`license`* of the new formula.
 * `--tap`:
   Generate the new formula within the given tap, specified as *`user`*`/`*`repo`*.
+* `-f`, `--force`:
+  Ignore errors for disallowed formula names and named that shadow aliases.
 
 ### `diy` [*`options`*]
 
@@ -824,6 +855,8 @@ formula from a tap that is not `homebrew/core` use its fully-qualified form of
 
 * `--version`:
   Extract the specified *`version`* of *`formula`* instead of the most recent.
+* `-f`, `--force`:
+  Overwrite the destination formula if it already exists.
 
 ### `formula` *`formula`*
 
@@ -883,7 +916,12 @@ Find pull requests that can be automatically merged using `brew pr-publish`.
 ### `pr-publish` [*`options`*] *`pull_request`* [*`pull_request`* ...]
 
 Publish bottles for a pull request with GitHub Actions. Requires write access to
-the `homebrew/core` repository.
+the repository.
+
+* `--tap`:
+  Target tap repository (default: `homebrew/core`).
+* `--workflow`:
+  Target workflow filename (default: `publish-commit-bottles.yml`).
 
 ### `pr-pull` [*`options`*] *`pull_request`* [*`pull_request`* ...]
 
@@ -903,6 +941,8 @@ repository.
   Do not warn if pulling to a branch besides master (useful for testing).
 * `--resolve`:
   When a patch fails to apply, leave in progress and allow user to resolve, instead of aborting.
+* `--warn-on-upload-failure`:
+  Warn instead of raising an error if the bottle upload fails. Useful for repairing bottle uploads that previously failed.
 * `--workflow`:
   Retrieve artifacts from the specified workflow (default: `tests.yml`).
 * `--artifact`:
@@ -922,8 +962,12 @@ Apply the bottle commit and publish bottles to Bintray.
 
 * `--no-publish`:
   Apply the bottle commit and upload the bottles, but don't publish them.
+* `--keep-old`:
+  If the formula specifies a rebuild version, attempt to preserve its value in the generated DSL.
 * `-n`, `--dry-run`:
   Print what would be done rather than doing it.
+* `--warn-on-upload-failure`:
+  Warn instead of raising an error if the bottle upload fails. Useful for repairing bottle uploads that previously failed.
 * `--bintray-org`:
   Upload to the specified Bintray organisation (default: `homebrew`).
 * `--root-url`:
@@ -963,6 +1007,11 @@ build systems would not find otherwise.
 * `--env`:
   Use the standard `PATH` instead of superenv's when `std` is passed.
 
+### `sponsors`
+
+Print a Markdown summary of Homebrew's GitHub Sponsors, suitable for pasting
+into a README.
+
 ### `style` [*`options`*] [*`file`*|*`tap`*|*`formula`*]
 
 Check formulae or files for conformance to Homebrew style guidelines.
@@ -998,6 +1047,8 @@ wrong with the installed formula.
   Test the head version of a formula.
 * `--keep-tmp`:
   Retain the temporary files created for the test.
+* `--retry`:
+  Retry if a testing fails.
 
 ### `tests` [*`options`*]
 
@@ -1029,13 +1080,30 @@ directory.
   Patches for *`formula`* will be applied to the unpacked source.
 * `-g`, `--git`:
   Initialise a Git repository in the unpacked source. This is useful for creating patches for the software.
+* `-f`, `--force`:
+  Overwrite the destination directory if it already exists.
 
-### `update_license_data` *`cmd`*
+### `update-license-data` [*`options`*]
 
  Update SPDX license data in the Homebrew repository.
 
-* `--fail-if-changed`:
-  Return a failing status code if current license data's version is different from the upstream. This can be used to notify CI when the SPDX license data is out of date.
+* `--fail-if-not-changed`:
+  Return a failing status code if current license data's version is the same as the upstream. This can be used to notify CI when the SPDX license data is out of date.
+* `--commit`:
+  Commit changes to the SPDX license data.
+
+### `update-python-resources` [*`options`*] *`formula`*
+
+Update versions for PyPI resource blocks in *`formula`*.
+
+* `-p`, `--print-only`:
+  Print the updated resource blocks instead of changing *`formula`*.
+* `-s`, `--silent`:
+  Suppress any output.
+* `--ignore-non-pypi-packages`:
+  Don't fail if *`formula`* is not a PyPI package.
+* `--version`:
+  Use the specified *`version`* when finding resources for *`formula`*. If no version is specified, the current version for *`formula`* will be used.
 
 ### `update-test` [*`options`*]
 
@@ -1067,9 +1135,6 @@ These options are applicable across multiple subcommands.
 
 * `-d`, `--debug`:
   Display any debugging information.
-
-* `-f`, `--force`:
-  Override warnings and enable potentially unsafe operations.
 
 ## OFFICIAL EXTERNAL COMMANDS
 
@@ -1383,6 +1448,9 @@ Note that environment variables must have a value set to be detected. For exampl
 
     *Default:* `15`.
 
+  * `HOMEBREW_FORBIDDEN_LICENSES`:
+    A space-separated list of licenses. Homebrew will refuse to install a formula if that formula or any of its dependencies has a license on this list.
+
   * `HOMEBREW_FORCE_BREWED_CURL`:
     If set, always use a Homebrew-installed `curl`(1) rather than the system version. Automatically set if the system version of `curl` is too old.
 
@@ -1531,9 +1599,9 @@ Homebrew's Project Leadership Committee is Misty De Meo, Shaun Jackman, Jonathan
 
 Homebrew's Technical Steering Committee is Michka Popoff, FX Coudert, Markus Reiter, Misty De Meo and Mike McQuaid.
 
-Homebrew/brew's Linux maintainers are Michka Popoff, Shaun Jackman, Dawid Dziurla and Issy Long.
+Homebrew/brew's Linux maintainers are Michka Popoff, Shaun Jackman, Dawid Dziurla, Issy Long and Maxim Belkin.
 
-Homebrew's other current maintainers are Claudia Pellegrino, Zach Auten, Rui Chen, Vitor Galvao, Caleb Xu, Gautham Goli, Steven Peters, Bo Anderson, William Woodruff, Igor Kapkov, Sam Ford, Alexander Bayandin, Izaak Beekman, Eric Knibbe, Viktor Szakats, Thierry Moisan, Steven Peters, Tom Schoonjans and Issy Long.
+Homebrew's other current maintainers are Claudia Pellegrino, Zach Auten, Rui Chen, Vitor Galvao, Caleb Xu, Gautham Goli, Steven Peters, Bo Anderson, William Woodruff, Igor Kapkov, Sam Ford, Alexander Bayandin, Izaak Beekman, Eric Knibbe, Viktor Szakats, Thierry Moisan, Steven Peters, Tom Schoonjans, Issy Long, CoreCode, Randall, Rylan Polster and SeekingMeaning.
 
 Former maintainers with significant contributions include Jan Viljanen, JCount, commitay, Dominyk Tiller, Tim Smith, Baptiste Fontaine, Xu Cheng, Martin Afanasjew, Brett Koonce, Charlie Sharpsteen, Jack Nagel, Adam Vandenberg, Andrew Janke, Alex Dunn, neutric, Tomasz Pajor, Uladzislau Shablinski, Alyssa Ross, ilovezfs, Chongyu Zhu and Homebrew's creator: Max Howell.
 

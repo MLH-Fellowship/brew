@@ -102,6 +102,23 @@ module RuboCop
         def audit_formula(_node, _class_node, _parent_class_node, body_node)
           problem "Use new-style option definitions" if find_method_def(body_node, :options)
 
+          if formula_tap == "homebrew-core"
+            # Use of build.with? implies options, which are forbidden in homebrew/core
+            find_instance_method_call(body_node, :build, :without?) do
+              problem "Formulae in homebrew/core should not use `build.without?`."
+            end
+            find_instance_method_call(body_node, :build, :with?) do
+              problem "Formulae in homebrew/core should not use `build.with?`."
+            end
+
+            return
+          end
+
+          depends_on_build_with(body_node) do |build_with_node|
+            offending_node(build_with_node)
+            problem "Use `:optional` or `:recommended` instead of `if #{build_with_node.source}`"
+          end
+
           find_instance_method_call(body_node, :build, :without?) do |method|
             next unless unless_modifier?(method.parent)
 
@@ -143,29 +160,8 @@ module RuboCop
             problem "Don't duplicate 'with': Use `build.with? \"#{match[1]}\"` to check for \"--with-#{match[1]}\""
           end
 
-          find_instance_method_call(body_node, :build, :include?) do |method|
-            arg = parameters(method).first
-            next unless match = regex_match_group(arg, /^with(out)?-(.*)/)
-
-            problem "Use build.with#{match[1]}? \"#{match[2]}\" instead of " \
-                    "build.include? 'with#{match[1]}-#{match[2]}'"
-          end
-
-          find_instance_method_call(body_node, :build, :include?) do |method|
-            arg = parameters(method).first
-            next unless match = regex_match_group(arg, /^--(.*)$/)
-
-            problem "Reference '#{match[1]}' without dashes"
-          end
-
-          return if formula_tap != "homebrew-core"
-
-          # Use of build.with? implies options, which are forbidden in homebrew/core
-          find_instance_method_call(body_node, :build, :without?) do
-            problem "Formulae in homebrew/core should not use `build.without?`."
-          end
-          find_instance_method_call(body_node, :build, :with?) do
-            problem "Formulae in homebrew/core should not use `build.with?`."
+          find_instance_method_call(body_node, :build, :include?) do
+            problem "`build.include?` is deprecated"
           end
         end
 
@@ -174,6 +170,12 @@ module RuboCop
 
           node.modifier_form? && node.unless?
         end
+
+        # Finds `depends_on "foo" if build.with?("bar")` or `depends_on "foo" if build.without?("bar")`
+        def_node_search :depends_on_build_with, <<~EOS
+          (if $(send (send nil? :build) {:with? :without?} str)
+            (send nil? :depends_on str) nil?)
+        EOS
       end
 
       class MpiCheck < FormulaCop
@@ -552,6 +554,55 @@ module RuboCop
               problem "Formulae in homebrew/core (except e.g. cryptography, libraries) " \
                       "should not run build-time checks"
             end
+          end
+        end
+      end
+
+      class ShellCommands < FormulaCop
+        def audit_formula(_node, _class_node, _parent_class_node, body_node)
+          # Match shell commands separated by spaces in the same string
+          shell_cmd_with_spaces_regex = /[^"' ]*(?:\s[^"' ]*)+/
+
+          popen_commands = [
+            :popen_read,
+            :safe_popen_read,
+            :popen_write,
+            :safe_popen_write,
+          ]
+
+          shell_metacharacters = %w[> < < | ; : & * $ ? : ~ + @ !` ( ) [ ]]
+
+          find_every_method_call_by_name(body_node, :system).each do |method|
+            # Only separate when no shell metacharacters are present
+            next if shell_metacharacters.any? { |meta| string_content(parameters(method).first).include?(meta) }
+
+            next unless match = regex_match_group(parameters(method).first, shell_cmd_with_spaces_regex)
+
+            good_args = match[0].gsub(" ", "\", \"")
+            offending_node(parameters(method).first)
+            problem "Separate `system` commands into `\"#{good_args}\"`"
+          end
+
+          popen_commands.each do |command|
+            find_instance_method_call(body_node, "Utils", command) do |method|
+              index = parameters(method).first.hash_type? ? 1 : 0
+
+              # Only separate when no shell metacharacters are present
+              next if shell_metacharacters.any? { |meta| string_content(parameters(method)[index]).include?(meta) }
+
+              next unless match = regex_match_group(parameters(method)[index], shell_cmd_with_spaces_regex)
+
+              good_args = match[0].gsub(" ", "\", \"")
+              offending_node(parameters(method)[index])
+              problem "Separate `Utils.#{command}` commands into `\"#{good_args}\"`"
+            end
+          end
+        end
+
+        def autocorrect(node)
+          lambda do |corrector|
+            good_args = node.source.gsub(" ", "\", \"")
+            corrector.replace(node.source_range, good_args)
           end
         end
       end

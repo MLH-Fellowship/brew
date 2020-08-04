@@ -33,6 +33,9 @@ module Homebrew
       switch "--resolve",
              description: "When a patch fails to apply, leave in progress and allow user to resolve, "\
                           "instead of aborting."
+      switch "--warn-on-upload-failure",
+             description: "Warn instead of raising an error if the bottle upload fails. "\
+                          "Useful for repairing bottle uploads that previously failed."
       flag   "--workflow=",
              description: "Retrieve artifacts from the specified workflow (default: `tests.yml`)."
       flag   "--artifact=",
@@ -46,8 +49,7 @@ module Homebrew
       flag   "--bintray-mirror=",
              description: "Use the specified Bintray repository to automatically mirror stable URLs "\
                           "defined in the formulae (default: `mirror`)."
-      switch :verbose
-      switch :debug
+
       min_named 1
     end
   end
@@ -73,7 +75,7 @@ module Homebrew
     end
   end
 
-  def signoff!(pr, tap:)
+  def signoff!(pr, tap:, args:)
     message = Utils.popen_read "git", "-C", tap.path, "log", "-1", "--pretty=%B"
     subject = message.lines.first.strip
 
@@ -92,15 +94,15 @@ module Homebrew
     body += "\n\n#{close_message}" unless body.include? close_message
     new_message = [subject, body, trailers].join("\n\n").strip
 
-    if Homebrew.args.dry_run?
+    if args.dry_run?
       puts "git commit --amend --signoff -m $message"
     else
       safe_system "git", "-C", tap.path, "commit", "--amend", "--signoff", "--allow-empty", "-q", "-m", new_message
     end
   end
 
-  def cherry_pick_pr!(pr, path: ".")
-    if Homebrew.args.dry_run?
+  def cherry_pick_pr!(pr, path: ".", args:)
+    if args.dry_run?
       puts <<~EOS
         git fetch --force origin +refs/pull/#{pr}/head
         git merge-base HEAD FETCH_HEAD
@@ -117,7 +119,7 @@ module Homebrew
       result = Homebrew.args.verbose? ? system(*cherry_pick_args) : quiet_system(*cherry_pick_args)
 
       unless result
-        if Homebrew.args.resolve?
+        if args.resolve?
           odie "Cherry-pick failed: try to resolve it."
         else
           system "git", "-C", path, "cherry-pick", "--abort"
@@ -127,7 +129,7 @@ module Homebrew
     end
   end
 
-  def check_branch(path, ref)
+  def check_branch(path, ref, args:)
     branch = Utils.popen_read("git", "-C", path, "symbolic-ref", "--short", "HEAD").strip
 
     return if branch == ref || args.clean? || args.branch_okay?
@@ -135,25 +137,25 @@ module Homebrew
     opoo "Current branch is #{branch}: do you need to pull inside #{ref}?"
   end
 
-  def formulae_need_bottles?(tap, original_commit)
-    return if Homebrew.args.dry_run?
+  def formulae_need_bottles?(tap, original_commit, args:)
+    return if args.dry_run?
 
     changed_formulae(tap, original_commit).any? do |f|
       !f.bottle_unneeded? && !f.bottle_disabled?
     end
   end
 
-  def mirror_formulae(tap, original_commit, publish: true, org:, repo:)
+  def mirror_formulae(tap, original_commit, publish: true, org:, repo:, args:)
     changed_formulae(tap, original_commit).select do |f|
       stable_urls = [f.stable.url] + f.stable.mirrors
       stable_urls.grep(%r{^https://dl.bintray.com/#{org}/#{repo}/}) do |mirror_url|
-        if Homebrew.args.dry_run?
+        if args.dry_run?
           puts "brew mirror #{f.full_name}"
         else
           odebug "Mirroring #{mirror_url}"
           mirror_args = ["mirror", f.full_name]
-          mirror_args << "--debug" if Homebrew.args.debug?
-          mirror_args << "--verbose" if Homebrew.args.verbose?
+          mirror_args << "--debug" if args.debug?
+          mirror_args << "--verbose" if args.verbose?
           mirror_args << "--bintray-org=#{org}" if org
           mirror_args << "--bintray-repo=#{repo}" if repo
           mirror_args << "--no-publish" unless publish
@@ -207,7 +209,7 @@ module Homebrew
   end
 
   def pr_pull
-    pr_pull_args.parse
+    args = pr_pull_args.parse
 
     bintray_user = ENV["HOMEBREW_BINTRAY_USER"]
     bintray_key = ENV["HOMEBREW_BINTRAY_KEY"]
@@ -230,20 +232,22 @@ module Homebrew
       _, user, repo, pr = *url_match
       odie "Not a GitHub pull request: #{arg}" unless pr
 
-      check_branch tap.path, "master"
+      check_branch tap.path, "master", args: args
 
       ohai "Fetching #{tap} pull request ##{pr}"
       Dir.mktmpdir pr do |dir|
         cd dir do
           original_commit = Utils.popen_read("git", "-C", tap.path, "rev-parse", "HEAD").chomp
-          cherry_pick_pr! pr, path: tap.path
-          signoff! pr, tap: tap unless args.clean?
+          cherry_pick_pr!(pr, path: tap.path, args: args)
+          signoff!(pr, tap: tap, args: args) unless args.clean?
 
           unless args.no_upload?
-            mirror_formulae(tap, original_commit, org: bintray_org, repo: mirror_repo, publish: !args.no_publish?)
+            mirror_formulae(tap, original_commit,
+                            org: bintray_org, repo: mirror_repo, publish: !args.no_publish?,
+                            args: args)
           end
 
-          unless formulae_need_bottles? tap, original_commit
+          unless formulae_need_bottles?(tap, original_commit, args: args)
             ohai "Skipping artifacts for ##{pr} as the formulae don't need bottles"
             next
           end
@@ -254,13 +258,14 @@ module Homebrew
           next if args.no_upload?
 
           upload_args = ["pr-upload"]
-          upload_args << "--debug" if Homebrew.args.debug?
-          upload_args << "--verbose" if Homebrew.args.verbose?
+          upload_args << "--debug" if args.debug?
+          upload_args << "--verbose" if args.verbose?
           upload_args << "--no-publish" if args.no_publish?
           upload_args << "--dry-run" if args.dry_run?
+          upload_args << "--warn-on-upload-failure" if args.warn_on_upload_failure?
           upload_args << "--root_url=#{args.root_url}" if args.root_url
           upload_args << "--bintray-org=#{bintray_org}"
-          system HOMEBREW_BREW_FILE, *upload_args
+          safe_system HOMEBREW_BREW_FILE, *upload_args
         end
       end
     end

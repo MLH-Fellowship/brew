@@ -1,6 +1,5 @@
 false:
   - ./bintray.rb
-  - ./bottle_publisher.rb
   - ./brew.rb
   - ./build.rb
   - ./cask/artifact/abstract_artifact.rb
@@ -39,7 +38,6 @@ false:
   - ./cask/cask.rb
   - ./cask/cask_loader.rb
   - ./cask/caskroom.rb
-  - ./cask/checkable.rb
   - ./cask/cmd.rb
   - ./cask/cmd/--cache.rb
   - ./cask/cmd/abstract_command.rb
@@ -81,9 +79,7 @@ false:
   - ./cask/utils.rb
   - ./cask/verify.rb
   - ./caveats.rb
-  - ./cleaner.rb
   - ./cleanup.rb
-  - ./cli/args.rb
   - ./cli/parser.rb
   - ./cmd/--cache.rb
   - ./cmd/--cellar.rb
@@ -129,15 +125,11 @@ false:
   - ./cmd/uses.rb
   - ./commands.rb
   - ./compat/language/python.rb
-  - ./compilers.rb
   - ./cxxstdlib.rb
   - ./debrew.rb
   - ./debrew/irb.rb
   - ./dependencies.rb
   - ./dependency.rb
-  - ./dependency_collector.rb
-  - ./description_cache_store.rb
-  - ./descriptions.rb
   - ./dev-cmd/audit.rb
   - ./dev-cmd/bottle.rb
   - ./dev-cmd/bump-formula-pr.rb
@@ -163,17 +155,19 @@ false:
   - ./dev-cmd/release-notes.rb
   - ./dev-cmd/ruby.rb
   - ./dev-cmd/sh.rb
+  - ./dev-cmd/sponsors.rb
   - ./dev-cmd/style.rb
   - ./dev-cmd/tap-new.rb
   - ./dev-cmd/test.rb
   - ./dev-cmd/tests.rb
   - ./dev-cmd/unpack.rb
+  - ./dev-cmd/update-license-data.rb
+  - ./dev-cmd/update-python-resources.rb
   - ./dev-cmd/update-test.rb
   - ./dev-cmd/vendor-gems.rb
   - ./development_tools.rb
   - ./diagnostic.rb
   - ./download_strategy.rb
-  - ./env_config.rb
   - ./exceptions.rb
   - ./extend/ENV.rb
   - ./extend/ENV/shared.rb
@@ -185,6 +179,7 @@ false:
   - ./extend/os/linux/hardware/cpu.rb
   - ./extend/os/linux/install.rb
   - ./extend/os/linux/keg_relocate.rb
+  - ./extend/os/linux/readall.rb
   - ./extend/os/linux/requirements/osxfuse_requirement.rb
   - ./extend/os/linux/system_config.rb
   - ./extend/os/linux/tap.rb
@@ -215,18 +210,14 @@ false:
   - ./formula_versions.rb
   - ./formulary.rb
   - ./global.rb
-  - ./help.rb
   - ./install.rb
   - ./keg.rb
-  - ./language/go.rb
-  - ./language/java.rb
   - ./language/node.rb
   - ./language/python.rb
   - ./linkage_checker.rb
   - ./lock_file.rb
   - ./migrator.rb
   - ./missing_formula.rb
-  - ./os/linux.rb
   - ./os/mac.rb
   - ./os/mac/keg.rb
   - ./os/mac/mach.rb
@@ -276,7 +267,7 @@ false:
   - ./test.rb
   - ./test/ENV_spec.rb
   - ./test/bintray_spec.rb
-  - ./test/bottle_publisher_spec.rb
+  - ./test/cask_dependent_spec.rb
   - ./test/cask/artifact/alt_target_spec.rb
   - ./test/cask/artifact/app_spec.rb
   - ./test/cask/artifact/binary_spec.rb
@@ -348,6 +339,7 @@ false:
   - ./test/dev-cmd/audit_spec.rb
   - ./test/dev-cmd/create_spec.rb
   - ./test/dev-cmd/extract_spec.rb
+  - ./test/dev-cmd/update-license-data_spec.rb
   - ./test/diagnostic_checks_spec.rb
   - ./test/download_strategies_spec.rb
   - ./test/error_during_execution_spec.rb
@@ -443,18 +435,15 @@ false:
   - ./unpack_strategy/xar.rb
   - ./unpack_strategy/xz.rb
   - ./unpack_strategy/zip.rb
+  - ./upgrade.rb
   - ./utils.rb
   - ./utils/analytics.rb
-  - ./utils/bottles.rb
   - ./utils/curl.rb
   - ./utils/fork.rb
   - ./utils/formatter.rb
   - ./utils/git.rb
   - ./utils/github.rb
-  - ./utils/notability.rb
   - ./utils/popen.rb
-  - ./utils/tty.rb
-  - ./utils/user.rb
 
 false:
   - ./PATH.rb
@@ -466,13 +455,8 @@ false:
   - ./cask/dsl/version.rb
   - ./cask/topological_hash.rb
   - ./cmd/cask.rb
-  - ./compat/extend/nil.rb
-  - ./compat/extend/string.rb
-  - ./compat/formula.rb
   - ./compat/language/haskell.rb
   - ./compat/language/java.rb
-  - ./compat/os/mac.rb
-  - ./dependable.rb
   - ./extend/git_repository.rb
   - ./extend/hash_validator.rb
   - ./extend/io.rb
@@ -490,19 +474,11 @@ false:
   - ./extend/os/mac/requirements/osxfuse_requirement.rb
   - ./extend/predicable.rb
   - ./extend/string.rb
-  - ./fetch.rb
-  - ./formula_pin.rb
-  - ./hardware.rb
   - ./keg_relocate.rb
-  - ./language/perl.rb
-  - ./messages.rb
   - ./mktemp.rb
   - ./options.rb
-  - ./os.rb
   - ./os/linux/elf.rb
-  - ./os/linux/glibc.rb
   - ./os/linux/global.rb
-  - ./os/linux/kernel.rb
   - ./os/mac/architecture_list.rb
   - ./pkg_version.rb
   - ./requirements/arch_requirement.rb
@@ -601,6 +577,7 @@ false:
   - ./test/dev-cmd/release-notes_spec.rb
   - ./test/dev-cmd/ruby_spec.rb
   - ./test/dev-cmd/sh_spec.rb
+  - ./test/dev-cmd/sponsors_spec.rb
   - ./test/dev-cmd/style_spec.rb
   - ./test/dev-cmd/tap-new_spec.rb
   - ./test/dev-cmd/test_spec.rb
@@ -626,6 +603,7 @@ false:
   - ./test/options_spec.rb
   - ./test/os/linux/diagnostic_spec.rb
   - ./test/os/linux/formula_spec.rb
+  - ./test/os/linux/pathname_spec.rb
   - ./test/os/mac/dependency_collector_spec.rb
   - ./test/os/mac/java_requirement_spec.rb
   - ./test/os/mac/keg_spec.rb
@@ -845,22 +823,31 @@ false:
   - ./test/version_spec.rb
   - ./unpack_strategy/uncompressed.rb
   - ./utils/gems.rb
-  - ./utils/inreplace.rb
-  - ./utils/link.rb
-  - ./utils/shebang.rb
-  - ./utils/shell.rb
-  - ./utils/svn.rb
+  - ./utils/pypi.rb
   - ./version.rb
 
 true:
   - ./build_options.rb
   - ./cache_store.rb
+  - ./cask_dependent.rb
   - ./cask/cache.rb
   - ./cask/denylist.rb
   - ./cask/macos.rb
   - ./cask/url.rb
   - ./checksum.rb
+  - ./cleaner.rb
+  - ./cli/args.rb
+  - ./compat/extend/nil.rb
+  - ./compat/extend/string.rb
+  - ./compat/formula.rb
+  - ./compat/os/mac.rb
+  - ./compilers.rb
   - ./config.rb
+  - ./dependable.rb
+  - ./dependency_collector.rb
+  - ./description_cache_store.rb
+  - ./descriptions.rb
+  - ./env_config.rb
   - ./extend/cachable.rb
   - ./extend/os/linux/development_tools.rb
   - ./extend/os/linux/formula.rb
@@ -871,16 +858,28 @@ true:
   - ./extend/os/mac/keg.rb
   - ./extend/os/mac/resource.rb
   - ./extend/os/mac/utils/analytics.rb
+  - ./fetch.rb
   - ./formula_free_port.rb
+  - ./formula_pin.rb
   - ./formula_support.rb
+  - ./hardware.rb
+  - ./help.rb
   - ./install_renamed.rb
+  - ./language/go.rb
+  - ./language/java.rb
+  - ./language/perl.rb
   - ./lazy_object.rb
   - ./linkage_cache_store.rb
   - ./livecheck.rb
   - ./load_path.rb
   - ./locale.rb
+  - ./messages.rb
   - ./metafiles.rb
   - ./official_taps.rb
+  - ./os.rb
+  - ./os/linux.rb
+  - ./os/linux/glibc.rb
+  - ./os/linux/kernel.rb
   - ./rubocops/cask/ast/cask_header.rb
   - ./rubocops/cask/ast/stanza.rb
   - ./rubocops/cask/constants/stanza.rb
@@ -889,6 +888,15 @@ true:
   - ./tap_constants.rb
   - ./test/support/helper/fixtures.rb
   - ./test/support/lib/config.rb
+  - ./utils/bottles.rb
+  - ./utils/inreplace.rb
+  - ./utils/link.rb
+  - ./utils/notability.rb
+  - ./utils/shebang.rb
+  - ./utils/shell.rb
+  - ./utils/svn.rb
+  - ./utils/tty.rb
+  - ./utils/user.rb
   - ./version/null.rb
 
 strict:
@@ -920,6 +928,7 @@ strict:
   - ./extend/os/mac/formula_support.rb
   - ./extend/os/missing_formula.rb
   - ./extend/os/pathname.rb
+  - ./extend/os/readall.rb
   - ./extend/os/requirements/java_requirement.rb
   - ./extend/os/requirements/osxfuse_requirement.rb
   - ./extend/os/requirements/x11_requirement.rb

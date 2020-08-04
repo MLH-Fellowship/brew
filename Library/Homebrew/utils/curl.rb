@@ -54,21 +54,25 @@ def curl(*args, secrets: [], **options)
                   secrets:      secrets
 end
 
-def curl_download(*args, to: nil, **options)
+def curl_download(*args, to: nil, partial: true, **options)
   destination = Pathname(to)
   destination.dirname.mkpath
 
-  range_stdout = curl_output("--location", "--range", "0-1",
-                             "--dump-header", "-",
-                             "--write-out", "%\{http_code}",
-                             "--output", "/dev/null", *args, **options).stdout
-  headers, _, http_status = range_stdout.partition("\r\n\r\n")
+  if partial
+    range_stdout = curl_output("--location", "--range", "0-1",
+                               "--dump-header", "-",
+                               "--write-out", "%\{http_code}",
+                               "--output", "/dev/null", *args, **options).stdout
+    headers, _, http_status = range_stdout.partition("\r\n\r\n")
 
-  supports_partial_download = http_status.to_i == 206 # Partial Content
-  if supports_partial_download &&
-     destination.exist? &&
-     destination.size == %r{^.*Content-Range: bytes \d+-\d+/(\d+)\r\n.*$}m.match(headers)&.[](1)&.to_i
-    return # We've already downloaded all the bytes
+    supports_partial_download = http_status.to_i == 206 # Partial Content
+    if supports_partial_download &&
+       destination.exist? &&
+       destination.size == %r{^.*Content-Range: bytes \d+-\d+/(\d+)\r\n.*$}m.match(headers)&.[](1)&.to_i
+      return # We've already downloaded all the bytes
+    end
+  else
+    supports_partial_download = false
   end
 
   continue_at = if destination.exist? && supports_partial_download
@@ -197,7 +201,8 @@ def curl_http_content_headers_and_checksum(url, hash_needed: false, user_agent: 
   while status_code == :unknown || status_code.to_s.start_with?("3")
     headers, _, output = output.partition("\r\n\r\n")
     status_code = headers[%r{HTTP/.* (\d+)}, 1]
-    final_url = headers[/^Location:\s*(.*)$/i, 1]&.chomp
+    location = headers[/^Location:\s*(.*)$/i, 1]
+    final_url = location.chomp if location
   end
 
   output_hash = Digest::SHA256.file(file.path) if hash_needed

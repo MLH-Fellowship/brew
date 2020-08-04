@@ -59,13 +59,16 @@ module OS
     end
 
     def languages
-      @languages ||= [
-        *Homebrew.args.value("language")&.split(","),
-        *ENV["HOMEBREW_LANGUAGES"]&.split(","),
-        *Open3.capture2("defaults", "read", "-g", "AppleLanguages")
-              .first
-              .scan(/[^ \n"(),]+/),
-      ].uniq
+      return @languages if @languages
+
+      os_langs = Utils.popen_read("defaults", "read", "-g", "AppleLanguages")
+      if os_langs.blank?
+        # User settings don't exist so check the system-wide one.
+        os_langs = Utils.popen_read("defaults", "read", "/Library/Preferences/.GlobalPreferences", "AppleLanguages")
+      end
+      os_langs = os_langs.scan(/[^ \n"(),]+/)
+
+      @languages = os_langs
     end
 
     def language
@@ -97,14 +100,16 @@ module OS
     # If no specific SDK is requested, the SDK matching the OS version is returned,
     # if available. Otherwise, the latest SDK is returned.
 
-    def sdk(v = nil)
-      @locator ||= if CLT.installed? && CLT.provides_sdk?
-        CLTSDKLocator.new
+    def sdk_locator
+      if CLT.installed? && CLT.provides_sdk?
+        CLT.sdk_locator
       else
-        XcodeSDKLocator.new
+        Xcode.sdk_locator
       end
+    end
 
-      @locator.sdk_if_applicable(v)
+    def sdk(v = nil)
+      sdk_locator.sdk_if_applicable(v)
     end
 
     def sdk_for_formula(f, v = nil)

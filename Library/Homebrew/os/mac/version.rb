@@ -7,7 +7,7 @@ module OS
   module Mac
     class Version < ::Version
       SYMBOLS = {
-        big_sur:     Hardware::CPU.arm? ? "11.0" : "10.16",
+        big_sur:     "11.0",
         catalina:    "10.15",
         mojave:      "10.14",
         high_sierra: "10.13",
@@ -43,6 +43,10 @@ module OS
 
       # For OS::Mac::Version compatibility
       def requires_nehalem_cpu?
+        unless Hardware::CPU.intel?
+          raise "Unexpected architecture: #{Hardware::CPU.arch}. This only works with Intel architecture."
+        end
+
         Hardware.oldest_cpu(self) == :nehalem
       end
       # https://en.wikipedia.org/wiki/Nehalem_(microarchitecture)

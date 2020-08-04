@@ -19,15 +19,14 @@ module Homebrew
              description: "Upload to the specified Bintray repository (default: `mirror`)."
       switch "--no-publish",
              description: "Upload to Bintray, but don't publish."
-      switch :verbose
-      switch :debug
+
       hide_from_man_page!
       min_named :formula
     end
   end
 
   def mirror
-    mirror_args.parse
+    args = mirror_args.parse
 
     bintray_org = args.bintray_org || "homebrew"
     bintray_repo = args.bintray_repo || "mirror"

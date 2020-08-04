@@ -86,12 +86,14 @@ module Homebrew
 
       let(:custom_spdx_id) { "zzz" }
       let(:standard_mismatch_spdx_id) { "0BSD" }
+      let(:license_array) { ["0BSD", "GPL-3.0"] }
+      let(:license_array_mismatch) { ["0BSD", "MIT"] }
+      let(:license_array_nonstandard) { ["0BSD", "zzz", "MIT"] }
 
       it "does not check if the formula is not a new formula" do
         fa = formula_auditor "foo", <<~RUBY, spdx_data: spdx_data, new_formula: false
           class Foo < Formula
             url "https://brew.sh/foo-1.0.tgz"
-            license ""
           end
         RUBY
 
@@ -103,7 +105,6 @@ module Homebrew
         fa = formula_auditor "foo", <<~RUBY, spdx_data: spdx_data, new_formula: true
           class Foo < Formula
             url "https://brew.sh/foo-1.0.tgz"
-            license ""
           end
         RUBY
 
@@ -120,7 +121,19 @@ module Homebrew
         RUBY
 
         fa.audit_license
-        expect(fa.problems.first).to match "#{custom_spdx_id} is not a standard SPDX license."
+        expect(fa.problems.first).to match "Formula foo contains non-standard SPDX licenses: [\"zzz\"]."
+      end
+
+      it "detects if license array contains a non-standard spdx-id" do
+        fa = formula_auditor "foo", <<~RUBY, spdx_data: spdx_data, new_formula: true
+          class Foo < Formula
+            url "https://brew.sh/foo-1.0.tgz"
+            license #{license_array_nonstandard}
+          end
+        RUBY
+
+        fa.audit_license
+        expect(fa.problems.first).to match "Formula foo contains non-standard SPDX licenses: [\"zzz\"]."
       end
 
       it "verifies that a license info is a standard spdx id" do
@@ -128,6 +141,18 @@ module Homebrew
           class Foo < Formula
             url "https://brew.sh/foo-1.0.tgz"
             license "0BSD"
+          end
+        RUBY
+
+        fa.audit_license
+        expect(fa.problems).to be_empty
+      end
+
+      it "verifies that a license array contains only standard spdx id" do
+        fa = formula_auditor "foo", <<~RUBY, spdx_data: spdx_data, new_formula: true
+          class Foo < Formula
+            url "https://brew.sh/foo-1.0.tgz"
+            license #{license_array}
           end
         RUBY
 
@@ -160,8 +185,37 @@ module Homebrew
         RUBY
 
         fa.audit_license
-        expect(fa.problems.first).to match "License mismatch - GitHub license is: GPL-3.0, "\
-        "but Formulae license states: #{standard_mismatch_spdx_id}."
+        expect(fa.problems.first).to match "License mismatch - GitHub license is: [\"GPL-3.0\"], "\
+        "but Formulae license states: #{Array(standard_mismatch_spdx_id)}."
+      end
+
+      it "checks online and detects that an array of license does not contain "\
+        "what is indicated on its Github repository" do
+        fa = formula_auditor "cask", <<~RUBY, online: true, spdx_data: spdx_data, core_tap: true, new_formula: true
+          class Cask < Formula
+            url "https://github.com/cask/cask/archive/v0.8.4.tar.gz"
+            head "https://github.com/cask/cask.git"
+            license #{license_array_mismatch}
+          end
+        RUBY
+
+        fa.audit_license
+        expect(fa.problems.first).to match "License mismatch - GitHub license is: [\"GPL-3.0\"], "\
+        "but Formulae license states: #{Array(license_array_mismatch)}."
+      end
+
+      it "checks online and verifies that an array of license contains "\
+        "what is indicated on its Github repository" do
+        fa = formula_auditor "cask", <<~RUBY, online: true, spdx_data: spdx_data, core_tap: true, new_formula: true
+          class Cask < Formula
+            url "https://github.com/cask/cask/archive/v0.8.4.tar.gz"
+            head "https://github.com/cask/cask.git"
+            license #{license_array}
+          end
+        RUBY
+
+        fa.audit_license
+        expect(fa.problems).to be_empty
       end
     end
 
@@ -179,60 +233,6 @@ module Homebrew
       end
     end
 
-    # Intentionally outputted non-interpolated strings
-    # rubocop:disable Lint/InterpolationCheck
-    describe "#line_problems" do
-      specify "pkgshare" do
-        fa = formula_auditor "foo", <<~RUBY, strict: true
-          class Foo < Formula
-            url "https://brew.sh/foo-1.0.tgz"
-          end
-        RUBY
-
-        fa.line_problems 'ohai "#{share}/foo"', 3
-        expect(fa.problems.shift).to eq("Use \#{pkgshare} instead of \#{share}/foo")
-
-        fa.line_problems 'ohai "#{share}/foo/bar"', 3
-        expect(fa.problems.shift).to eq("Use \#{pkgshare} instead of \#{share}/foo")
-
-        fa.line_problems 'ohai share/"foo"', 3
-        expect(fa.problems.shift).to eq('Use pkgshare instead of (share/"foo")')
-
-        fa.line_problems 'ohai share/"foo/bar"', 3
-        expect(fa.problems.shift).to eq('Use pkgshare instead of (share/"foo")')
-
-        fa.line_problems 'ohai "#{share}/foo-bar"', 3
-        expect(fa.problems).to eq([])
-
-        fa.line_problems 'ohai share/"foo-bar"', 3
-        expect(fa.problems).to eq([])
-
-        fa.line_problems 'ohai share/"bar"', 3
-        expect(fa.problems).to eq([])
-      end
-
-      # Regression test for https://github.com/Homebrew/legacy-homebrew/pull/48744
-      # Formulae with "++" in their name would break various audit regexps:
-      #   Error: nested *?+ in regexp: /^libxml++3\s/
-      specify "++ in name" do
-        fa = formula_auditor "foolibc++", <<~RUBY, strict: true
-          class Foolibcxx < Formula
-            desc "foolibc++ is a test"
-            url "https://brew.sh/foo-1.0.tgz"
-          end
-        RUBY
-
-        fa.line_problems 'ohai "#{share}/foolibc++"', 3
-        expect(fa.problems.shift)
-          .to eq("Use \#{pkgshare} instead of \#{share}/foolibc++")
-
-        fa.line_problems 'ohai share/"foolibc++"', 3
-        expect(fa.problems.shift)
-          .to eq('Use pkgshare instead of (share/"foolibc++")')
-      end
-    end
-    # rubocop:enable Lint/InterpolationCheck
-
     describe "#audit_github_repository" do
       specify "#audit_github_repository when HOMEBREW_NO_GITHUB_API is set" do
         ENV["HOMEBREW_NO_GITHUB_API"] = "1"
@@ -249,6 +249,20 @@ module Homebrew
       end
     end
 
+    describe "#audit_github_repository_archived" do
+      specify "#audit_github_repository_archived when HOMEBREW_NO_GITHUB_API is set" do
+        fa = formula_auditor "foo", <<~RUBY, strict: true, online: true
+          class Foo < Formula
+            homepage "https://github.com/example/example"
+            url "https://brew.sh/foo-1.0.tgz"
+          end
+        RUBY
+
+        fa.audit_github_repository_archived
+        expect(fa.problems).to eq([])
+      end
+    end
+
     describe "#audit_gitlab_repository" do
       specify "#audit_gitlab_repository for stars, forks and creation date" do
         fa = formula_auditor "foo", <<~RUBY, strict: true, online: true
@@ -259,6 +273,20 @@ module Homebrew
         RUBY
 
         fa.audit_gitlab_repository
+        expect(fa.problems).to eq([])
+      end
+    end
+
+    describe "#audit_gitlab_repository_archived" do
+      specify "#audit gitlab repository for archived status" do
+        fa = formula_auditor "foo", <<~RUBY, strict: true, online: true
+          class Foo < Formula
+            homepage "https://gitlab.com/libtiff/libtiff"
+            url "https://brew.sh/foo-1.0.tgz"
+          end
+        RUBY
+
+        fa.audit_gitlab_repository_archived
         expect(fa.problems).to eq([])
       end
     end
@@ -315,7 +343,7 @@ module Homebrew
           subject { fa }
 
           let(:fa) do
-            formula_auditor "foo", <<~RUBY, new_formula: true
+            formula_auditor "foo", <<~RUBY, new_formula: true, core_tap: true
               class Foo < Formula
                 url "https://brew.sh/foo-1.0.tgz"
                 homepage "https://brew.sh"
@@ -363,6 +391,7 @@ module Homebrew
         origin_formula_path.write <<~RUBY
           class Foo#{foo_version} < Formula
             url "https://brew.sh/foo-1.0.tar.gz"
+            sha256 "31cccfc6630528db1c8e3a06f6decf2a370060b982841cfab2b8677400a5092e"
             revision 2
             version_scheme 1
           end
@@ -388,7 +417,7 @@ module Homebrew
         formula_path.write text
       end
 
-      def formula_gsub_commit(before, after = "")
+      def formula_gsub_origin_commit(before, after = "")
         text = origin_formula_path.read
         text.gsub!(before, after)
         origin_formula_path.unlink
@@ -404,19 +433,48 @@ module Homebrew
         end
       end
 
+      context "checksums" do
+        context "should not change with the same version" do
+          before do
+            formula_gsub(
+              'sha256 "31cccfc6630528db1c8e3a06f6decf2a370060b982841cfab2b8677400a5092e"',
+              'sha256 "3622d2a53236ed9ca62de0616a7e80fd477a9a3f862ba09d503da188f53ca523"',
+            )
+          end
+
+          it { is_expected.to match("stable sha256 changed without the version also changing") }
+        end
+
+        context "can change with the different version" do
+          before do
+            formula_gsub_origin_commit(
+              'sha256 "31cccfc6630528db1c8e3a06f6decf2a370060b982841cfab2b8677400a5092e"',
+              'sha256 "3622d2a53236ed9ca62de0616a7e80fd477a9a3f862ba09d503da188f53ca523"',
+            )
+            formula_gsub "foo-1.0.tar.gz", "foo-1.1.tar.gz"
+            formula_gsub_origin_commit(
+              'sha256 "3622d2a53236ed9ca62de0616a7e80fd477a9a3f862ba09d503da188f53ca523"',
+              'sha256 "e048c5e6144f5932d8672c2fade81d9073d5b3ca1517b84df006de3d25414fc1"',
+            )
+          end
+
+          it { is_expected.to be_nil }
+        end
+      end
+
       context "revisions" do
         context "should not be removed when first committed above 0" do
           it { is_expected.to be_nil }
         end
 
         context "should not decrease with the same version" do
-          before { formula_gsub_commit "revision 2", "revision 1" }
+          before { formula_gsub_origin_commit "revision 2", "revision 1" }
 
           it { is_expected.to match("revision should not decrease (from 2 to 1)") }
         end
 
         context "should not be removed with the same version" do
-          before { formula_gsub_commit "revision 2" }
+          before { formula_gsub_origin_commit "revision 2" }
 
           it { is_expected.to match("revision should not decrease (from 2 to 0)") }
         end
@@ -428,15 +486,15 @@ module Homebrew
         end
 
         context "should be removed with a newer version" do
-          before { formula_gsub_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz" }
+          before { formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz" }
 
           it { is_expected.to match("'revision 2' should be removed") }
         end
 
         context "should not warn on an newer version revision removal" do
           before do
-            formula_gsub_commit "revision 2", ""
-            formula_gsub_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
+            formula_gsub_origin_commit "revision 2", ""
+            formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
           end
 
           it { is_expected.to be_nil }
@@ -453,9 +511,9 @@ module Homebrew
 
         context "should not warn on past increment by more than 1" do
           before do
-            formula_gsub_commit "revision 2", "# no revision"
-            formula_gsub_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
-            formula_gsub_commit "# no revision", "revision 3"
+            formula_gsub_origin_commit "revision 2", "# no revision"
+            formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
+            formula_gsub_origin_commit "# no revision", "revision 3"
           end
 
           it { is_expected.to be_nil }
@@ -464,16 +522,16 @@ module Homebrew
 
       context "version_schemes" do
         context "should not decrease with the same version" do
-          before { formula_gsub_commit "version_scheme 1" }
+          before { formula_gsub_origin_commit "version_scheme 1" }
 
           it { is_expected.to match("version_scheme should not decrease (from 1 to 0)") }
         end
 
         context "should not decrease with a new version" do
           before do
-            formula_gsub_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
-            formula_gsub_commit "version_scheme 1", ""
-            formula_gsub_commit "revision 2", ""
+            formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
+            formula_gsub_origin_commit "version_scheme 1", ""
+            formula_gsub_origin_commit "revision 2", ""
           end
 
           it { is_expected.to match("version_scheme should not decrease (from 1 to 0)") }
@@ -481,10 +539,10 @@ module Homebrew
 
         context "should only increment by 1" do
           before do
-            formula_gsub_commit "version_scheme 1", "# no version_scheme"
-            formula_gsub_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
-            formula_gsub_commit "revision 2", ""
-            formula_gsub_commit "# no version_scheme", "version_scheme 3"
+            formula_gsub_origin_commit "version_scheme 1", "# no version_scheme"
+            formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-1.1.tar.gz"
+            formula_gsub_origin_commit "revision 2", ""
+            formula_gsub_origin_commit "# no version_scheme", "version_scheme 3"
           end
 
           it { is_expected.to match("version_schemes should only increment by 1") }
@@ -500,8 +558,8 @@ module Homebrew
 
         context "committed can decrease" do
           before do
-            formula_gsub_commit "revision 2"
-            formula_gsub_commit "foo-1.0.tar.gz", "foo-0.9.tar.gz"
+            formula_gsub_origin_commit "revision 2"
+            formula_gsub_origin_commit "foo-1.0.tar.gz", "foo-0.9.tar.gz"
           end
 
           it { is_expected.to be_nil }
@@ -565,8 +623,8 @@ module Homebrew
 
     include_examples "formulae exist", described_class::VERSIONED_KEG_ONLY_ALLOWLIST
     include_examples "formulae exist", described_class::VERSIONED_HEAD_SPEC_ALLOWLIST
-    include_examples "formulae exist", described_class::USES_FROM_MACOS_ALLOWLIST
-    include_examples "formulae exist", described_class::THROTTLED_DENYLIST.keys
+    include_examples "formulae exist", described_class::PROVIDED_BY_MACOS_DEPENDS_ON_ALLOWLIST
+    include_examples "formulae exist", described_class::THROTTLED_FORMULAE.keys
     include_examples "formulae exist", described_class::UNSTABLE_ALLOWLIST.keys
     include_examples "formulae exist", described_class::GNOME_DEVEL_ALLOWLIST.keys
   end

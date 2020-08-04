@@ -1,11 +1,32 @@
+HOMEBREW_PROCESSOR="$(uname -m)"
+HOMEBREW_SYSTEM="$(uname -s)"
+case "$HOMEBREW_SYSTEM" in
+  Darwin) HOMEBREW_MACOS="1" ;;
+  Linux)  HOMEBREW_LINUX="1" ;;
+esac
+
 # Force UTF-8 to avoid encoding issues for users with broken locale settings.
 if [[ "$(locale charmap 2>/dev/null)" != "UTF-8" ]]
 then
-  export LC_ALL="en_US.UTF-8"
+  if [[ -n "$HOMEBREW_MACOS" ]]
+  then
+    export LC_ALL="en_US.UTF-8"
+  else
+    locales=$(locale -a)
+    c_utf_regex='\bC\.(utf8|UTF-8)\b'
+    en_us_regex='\ben_US\.(utf8|UTF-8)\b'
+    utf_regex='\b[a-z][a-z]_[A-Z][A-Z]\.(utf8|UTF-8)\b'
+    if [[ $locales =~ $c_utf_regex || $locales =~ $en_us_regex || $locales =~ $utf_regex ]]
+    then
+      export LC_ALL=${BASH_REMATCH[0]}
+    else
+      export LC_ALL=C
+    fi
+  fi
 fi
 
 # USER isn't always set so provide a fall back for `brew` and subprocesses.
-export USER=${USER:-`id -un`}
+export USER=${USER:-$(id -un)}
 
 # Where we store built products; a Cellar in HOMEBREW_PREFIX (often /usr/local
 # for bottles) unless there's already a Cellar in HOMEBREW_REPOSITORY.
@@ -20,6 +41,7 @@ case "$*" in
   --prefix)            echo "$HOMEBREW_PREFIX"; exit 0 ;;
   --cellar)            echo "$HOMEBREW_CELLAR"; exit 0 ;;
   --repository|--repo) echo "$HOMEBREW_REPOSITORY"; exit 0 ;;
+  --caskroom)          echo "$HOMEBREW_PREFIX/Caskroom"; exit 0 ;;
 esac
 
 # A depth of 1 means this command was directly invoked by a user.
@@ -87,12 +109,6 @@ then
   odie "Cowardly refusing to continue at this prefix: $HOMEBREW_PREFIX"
 fi
 
-HOMEBREW_SYSTEM="$(uname -s)"
-case "$HOMEBREW_SYSTEM" in
-  Darwin) HOMEBREW_MACOS="1" ;;
-  Linux)  HOMEBREW_LINUX="1" ;;
-esac
-
 if [[ -n "$HOMEBREW_FORCE_BREWED_CURL" &&
       -x "$HOMEBREW_PREFIX/opt/curl/bin/curl" ]] &&
          "$HOMEBREW_PREFIX/opt/curl/bin/curl" --version >/dev/null
@@ -119,11 +135,9 @@ fi
 
 if [[ -n "$HOMEBREW_MACOS" ]]
 then
-  HOMEBREW_PROCESSOR="$(uname -p)"
   HOMEBREW_PRODUCT="Homebrew"
   HOMEBREW_SYSTEM="Macintosh"
-  # This is i386 even on x86_64 machines
-  [[ "$HOMEBREW_PROCESSOR" = "i386" ]] && HOMEBREW_PROCESSOR="Intel"
+  [[ "$HOMEBREW_PROCESSOR" = "x86_64" ]] && HOMEBREW_PROCESSOR="Intel"
   HOMEBREW_MACOS_VERSION="$(/usr/bin/sw_vers -productVersion)"
   HOMEBREW_OS_VERSION="macOS $HOMEBREW_MACOS_VERSION"
   # Don't change this from Mac OS X to match what macOS itself does in Safari on 10.12
@@ -166,7 +180,6 @@ then
     HOMEBREW_MACOS_SYSTEM_RUBY_NEW_ENOUGH="1"
   fi
 else
-  HOMEBREW_PROCESSOR="$(uname -m)"
   HOMEBREW_PRODUCT="${HOMEBREW_SYSTEM}brew"
   [[ -n "$HOMEBREW_LINUX" ]] && HOMEBREW_OS_VERSION="$(lsb_release -sd 2>/dev/null)"
   : "${HOMEBREW_OS_VERSION:=$(uname -r)}"
@@ -271,6 +284,11 @@ export HOMEBREW_USER_AGENT
 export HOMEBREW_USER_AGENT_CURL
 export HOMEBREW_BOTTLE_DEFAULT_DOMAIN
 
+if [[ -n "$HOMEBREW_DEVELOPER" ]] && [[ -z "$HOMEBREW_NO_PATCHELF_RB" ]]
+then
+  export HOMEBREW_PATCHELF_RB="1"
+fi
+
 if [[ -n "$HOMEBREW_MACOS" && -x "/usr/bin/xcode-select" ]]
 then
   XCODE_SELECT_PATH=$('/usr/bin/xcode-select' --print-path 2>/dev/null)
@@ -319,6 +337,8 @@ fi
 
 for arg in "$@"
 do
+  [[ $arg = "--" ]] && break
+
   if [[ $arg = "--help" || $arg = "-h" || $arg = "--usage" || $arg = "-?" ]]
   then
     export HOMEBREW_HELP="1"
@@ -430,8 +450,8 @@ fi
 check-run-command-as-root() {
   [[ "$(id -u)" = 0 ]] || return
 
-  # Allow Azure Pipelines/Docker/Concourse/Kubernetes to do everything as root (as it's normal there)
-  [[ -f /proc/1/cgroup ]] && grep -E "azpl_job|docker|garden|kubepods" -q /proc/1/cgroup && return
+  # Allow Azure Pipelines/GitHub Actions/Docker/Concourse/Kubernetes to do everything as root (as it's normal there)
+  [[ -f /proc/1/cgroup ]] && grep -E "azpl_job|actions_job|docker|garden|kubepods" -q /proc/1/cgroup && return
 
   # Homebrew Services may need `sudo` for system-wide daemons.
   [[ "$HOMEBREW_COMMAND" = "services" ]] && return
@@ -510,6 +530,7 @@ update-preinstall() {
 
   if [[ "$HOMEBREW_COMMAND" = "install" || "$HOMEBREW_COMMAND" = "upgrade" ||
         "$HOMEBREW_COMMAND" = "bump-formula-pr" ||
+        "$HOMEBREW_COMMAND" = "bundle" ||
         "$HOMEBREW_COMMAND" = "tap" && $HOMEBREW_ARG_COUNT -gt 1 ||
         "$HOMEBREW_CASK_COMMAND" = "install" || "$HOMEBREW_CASK_COMMAND" = "upgrade" ]]
   then

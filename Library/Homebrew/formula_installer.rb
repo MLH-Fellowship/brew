@@ -17,9 +17,11 @@ require "linkage_checker"
 require "install"
 require "messages"
 require "cask/cask_loader"
+require "cmd/install"
 require "find"
 
 class FormulaInstaller
+  include Homebrew::Install
   include FormulaCellarChecks
   extend Predicable
 
@@ -37,26 +39,35 @@ class FormulaInstaller
   end
 
   attr_reader :formula
-  attr_accessor :options, :build_bottle
-  attr_accessor :installed_as_dependency, :installed_on_request, :link_keg
+  attr_accessor :cc, :env, :options, :build_bottle, :bottle_arch,
+                :build_from_source_formulae, :include_test_formulae,
+                :installed_as_dependency, :installed_on_request, :link_keg, :other_installers
 
   mode_attr_accessor :show_summary_heading, :show_header
-  mode_attr_accessor :build_from_source, :force_bottle, :include_test
-  mode_attr_accessor :ignore_deps, :only_deps, :interactive, :git
+  mode_attr_accessor :force_bottle, :ignore_deps, :only_deps, :interactive, :git, :force, :keep_tmp
   mode_attr_accessor :verbose, :debug, :quiet
 
-  def initialize(formula)
+  def initialize(formula,
+                 force_bottle: false,
+                 include_test_formulae: [],
+                 build_from_source_formulae: [],
+                 cc: nil)
     @formula = formula
+    @env = nil
+    @force = false
+    @keep_tmp = false
     @link_keg = !formula.keg_only?
     @show_header = false
     @ignore_deps = false
     @only_deps = false
-    @build_from_source = Homebrew.args.build_from_source?
+    @build_from_source_formulae = build_from_source_formulae
     @build_bottle = false
-    @force_bottle = Homebrew.args.force_bottle?
-    @include_test = Homebrew.args.include_test?
+    @bottle_arch = nil
+    @force_bottle = force_bottle
+    @include_test_formulae = include_test_formulae
     @interactive = false
     @git = false
+    @cc = cc
     @verbose = Homebrew.args.verbose?
     @quiet = Homebrew.args.quiet?
     @debug = Homebrew.args.debug?
@@ -77,15 +88,39 @@ class FormulaInstaller
     @attempted = Set.new
   end
 
+  def self.installed
+    @installed ||= Set.new
+  end
+
+  def self.clear_installed
+    @installed = Set.new
+  end
+
   # When no build tools are available and build flags are passed through ARGV,
   # it's necessary to interrupt the user before any sort of installation
-  # can proceed. Only invoked when the user has no developer tools.
-  def self.prevent_build_flags
-    build_flags = Homebrew.args.collect_build_args
+  # can proceed. Only raises when the user has no developer tools.
+  def self.prevent_build_flags(args)
+    return if DevelopmentTools.installed?
+
+    build_flags = []
+
+    build_flags << "--HEAD" if args.HEAD?
+    build_flags << "--universal" if args.universal?
+    build_flags << "--build-bottle" if args.build_bottle?
+    build_flags << "--build-from-source" if args.build_from_source?
+
     return if build_flags.empty?
 
-    all_bottled = Homebrew.args.formulae.all?(&:bottled?)
+    all_bottled = args.formulae.all?(&:bottled?)
     raise BuildFlagsError.new(build_flags, bottled: all_bottled)
+  end
+
+  def build_from_source?
+    build_from_source_formulae.include?(formula.full_name)
+  end
+
+  def include_test?
+    include_test_formulae.include?(formula.full_name)
   end
 
   def build_bottle?
@@ -100,7 +135,7 @@ class FormulaInstaller
     return false if !formula.bottled? && !formula.local_bottle_path
     return true  if force_bottle?
     return false if build_from_source? || build_bottle? || interactive?
-    return false if Homebrew.args.cc
+    return false if cc
     return false unless options.empty?
     return false if formula.bottle_disabled?
 
@@ -130,7 +165,7 @@ class FormulaInstaller
 
   def install_bottle_for?(dep, build)
     return pour_bottle? if dep == formula
-    return false if Homebrew.args.build_formula_from_source?(dep)
+    return false if build_from_source_formulae.include?(dep.full_name)
     return false unless dep.bottle && dep.pour_bottle?
     return false unless build.used_options.empty?
     return false unless dep.bottle.compatible_cellar?
@@ -141,6 +176,8 @@ class FormulaInstaller
   def prelude
     Tab.clear_cache
     verify_deps_exist unless ignore_deps?
+    forbidden_license_check
+
     check_install_sanity
   end
 
@@ -223,9 +260,7 @@ class FormulaInstaller
     lock
 
     start_time = Time.now
-    if !formula.bottle_unneeded? && !pour_bottle? && DevelopmentTools.installed?
-      Homebrew::Install.perform_build_from_source_checks
-    end
+    perform_build_from_source_checks if !formula.bottle_unneeded? && !pour_bottle? && DevelopmentTools.installed?
 
     # not in initialize so upgrade can unlink the active keg before calling this
     # function but after instantiating this class so that it can avoid having to
@@ -270,7 +305,7 @@ class FormulaInstaller
 
     return if only_deps?
 
-    if build_bottle? && (arch = Homebrew.args.bottle_arch) && !Hardware::CPU.optimization_flags.include?(arch.to_sym)
+    if build_bottle? && (arch = bottle_arch) && !Hardware::CPU.optimization_flags.include?(arch.to_sym)
       raise "Unrecognized architecture for --bottle-arch: #{arch}"
     end
 
@@ -292,7 +327,7 @@ class FormulaInstaller
 
     self.class.attempted << formula
 
-    if pour_bottle?(warn: true)
+    if pour_bottle?
       begin
         pour
       rescue Exception => e # rubocop:disable Lint/RescueException
@@ -357,7 +392,7 @@ class FormulaInstaller
   end
 
   def check_conflicts
-    return if Homebrew.args.force?
+    return if force?
 
     conflicts = formula.conflicts.select do |c|
       f = Formulary.factory(c.name)
@@ -390,9 +425,7 @@ class FormulaInstaller
   def compute_dependencies
     req_map, req_deps = expand_requirements
     check_requirements(req_map)
-    deps = expand_dependencies(req_deps + formula.deps)
-
-    deps
+    expand_dependencies(req_deps + formula.deps)
   end
 
   # Check that each dependency in deps has a bottle available, terminating
@@ -461,7 +494,7 @@ class FormulaInstaller
 
         if req.prune_from_option?(build)
           Requirement.prune
-        elsif req.satisfied?
+        elsif req.satisfied?(env: env, cc: cc, build_bottle: @build_bottle, bottle_arch: bottle_arch)
           Requirement.prune
         elsif (req.build? || req.test?) && !keep_build_test
           Requirement.prune
@@ -491,7 +524,7 @@ class FormulaInstaller
       )
 
       keep_build_test = false
-      keep_build_test ||= dep.test? && include_test? && Homebrew.args.include_formula_test_deps?(dependent)
+      keep_build_test ||= dep.test? && include_test? && include_test_formulae.include?(dependent.full_name)
       keep_build_test ||= dep.build? && !install_bottle_for?(dependent, build) && !dependent.latest_version_installed?
 
       if dep.prune_from_option?(build)
@@ -568,11 +601,12 @@ class FormulaInstaller
 
   def fetch_dependency(dep)
     df = dep.to_formula
-    fi = FormulaInstaller.new(df)
+    fi = FormulaInstaller.new(df, force_bottle:               false,
+                                  include_test_formulae:      include_test_formulae,
+                                  build_from_source_formulae: build_from_source_formulae)
 
-    fi.build_from_source       = Homebrew.args.build_formula_from_source?(df)
-    fi.force_bottle            = false
-    fi.include_test            = Homebrew.args.include_formula_test_deps?(df)
+    fi.force                   = force?
+    fi.keep_tmp                = keep_tmp?
     fi.verbose                 = verbose?
     fi.quiet                   = quiet?
     fi.debug                   = debug?
@@ -608,14 +642,16 @@ class FormulaInstaller
       EOS
     end
 
-    fi = FormulaInstaller.new(df)
+    fi = FormulaInstaller.new(df, force_bottle:               false,
+                                  include_test_formulae:      include_test_formulae,
+                                  build_from_source_formulae: build_from_source_formulae)
+
     fi.options                |= tab.used_options
     fi.options                |= Tab.remap_deprecated_options(df.deprecated_options, dep.options)
     fi.options                |= inherited_options
     fi.options                &= df.options
-    fi.build_from_source       = Homebrew.args.build_formula_from_source?(df)
-    fi.force_bottle            = false
-    fi.include_test            = Homebrew.args.include_formula_test_deps?(df)
+    fi.force                   = force?
+    fi.keep_tmp                = keep_tmp?
     fi.verbose                 = verbose?
     fi.quiet                   = quiet?
     fi.debug                   = debug?
@@ -700,6 +736,8 @@ class FormulaInstaller
 
     ohai "Summary" if verbose? || show_summary_heading?
     puts summary
+
+    self.class.installed << formula
   ensure
     unlock
   end
@@ -722,18 +760,18 @@ class FormulaInstaller
 
     if build_bottle?
       args << "--build-bottle"
-      args << "--bottle-arch=#{Homebrew.args.bottle_arch}" if Homebrew.args.bottle_arch
+      args << "--bottle-arch=#{bottle_arch}" if bottle_arch
     end
 
     args << "--git" if git?
     args << "--interactive" if interactive?
     args << "--verbose" if verbose?
     args << "--debug" if debug?
-    args << "--cc=#{Homebrew.args.cc}" if Homebrew.args.cc
-    args << "--keep-tmp" if Homebrew.args.keep_tmp?
+    args << "--cc=#{cc}" if cc
+    args << "--keep-tmp" if keep_tmp?
 
-    if Homebrew.args.env.present?
-      args << "--env=#{Homebrew.args.env}"
+    if env.present?
+      args << "--env=#{env}"
     elsif formula.env.std? || formula.deps.select(&:build?).any? { |d| d.name == "scons" }
       args << "--env=std"
     end
@@ -742,12 +780,6 @@ class FormulaInstaller
       args << "--HEAD"
     elsif formula.devel?
       args << "--devel"
-    end
-
-    formula.options.each do |opt|
-      name = opt.name[/^([^=]+)=$/, 1]
-      value = Homebrew.args.value(name) if name
-      args << "--#{name}=#{value}" if value
     end
 
     args
@@ -779,7 +811,7 @@ class FormulaInstaller
         sandbox = Sandbox.new
         formula.logs.mkpath
         sandbox.record_log(formula.logs/"build.sandbox.log")
-        sandbox.allow_write_path(ENV["HOME"]) if Homebrew.args.interactive?
+        sandbox.allow_write_path(ENV["HOME"]) if interactive?
         sandbox.allow_write_temp_and_cache
         sandbox.allow_write_log(formula)
         sandbox.allow_cvs
@@ -850,7 +882,7 @@ class FormulaInstaller
       if formula.link_overwrite?(conflict_file) && !link_overwrite_backup.key?(conflict_file)
         backup_file = backup_dir/conflict_file.relative_path_from(HOMEBREW_PREFIX).to_s
         backup_file.parent.mkpath
-        conflict_file.rename backup_file
+        FileUtils.mv conflict_file, backup_file
         link_overwrite_backup[conflict_file] = backup_file
         retry
       end
@@ -882,7 +914,7 @@ class FormulaInstaller
         keg.unlink
         link_overwrite_backup.each do |origin, backup|
           origin.parent.mkpath
-          backup.rename origin
+          FileUtils.mv backup, origin
         end
       end
       Homebrew.failed = true
@@ -983,11 +1015,24 @@ class FormulaInstaller
 
     return if only_deps?
 
-    unless pour_bottle?
-      formula.fetch_patches
-      formula.resources.each(&:fetch)
-    end
+    if pour_bottle?(warn: true)
+      begin
+        downloader.fetch
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        raise if Homebrew::EnvConfig.developer? ||
+                 Homebrew::EnvConfig.no_bottle_source_fallback? ||
+                 e.is_a?(Interrupt)
 
+        @pour_failed = true
+        onoe e.message
+        opoo "Bottle installation failed: building from source."
+        fetch_dependencies
+      end
+    end
+    return if pour_bottle?
+
+    formula.fetch_patches
+    formula.resources.each(&:fetch)
     downloader.fetch
   end
 
@@ -1081,5 +1126,31 @@ class FormulaInstaller
     return if @requirement_messages.empty?
 
     $stderr.puts @requirement_messages
+  end
+
+  def forbidden_license_check
+    forbidden_licenses = Homebrew::EnvConfig.forbidden_licenses
+                                            .to_s
+                                            .sub("Public Domain", "public_domain")
+                                            .split(" ")
+    return if forbidden_licenses.blank?
+
+    compute_dependencies.each do |dep, _|
+      next if @ignore_deps
+
+      dep_f = dep.to_formula
+      next unless dep_f.license.all? { |license| forbidden_licenses.include?(license.to_s) }
+
+      raise CannotInstallFormulaError, <<~EOS
+        The installation of #{formula.name} has a dependency on #{dep.name} where all its licenses are forbidden: #{dep_f.license}.
+      EOS
+    end
+    return if @only_deps
+
+    return unless formula.license.all? { |license| forbidden_licenses.include?(license.to_s) }
+
+    raise CannotInstallFormulaError, <<~EOS
+      #{formula.name}'s licenses are all forbidden: #{formula.license}.
+    EOS
   end
 end

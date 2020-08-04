@@ -15,13 +15,21 @@ module CleanupRefinement
     end
 
     def nested_cache?
-      directory? && %w[cargo_cache go_cache glide_home java_cache npm_cache gclient_cache].include?(basename.to_s)
+      directory? && %w[
+        cargo_cache
+        go_cache
+        go_mod_cache
+        glide_home
+        java_cache
+        npm_cache
+        gclient_cache
+      ].include?(basename.to_s)
     end
 
     def go_cache_directory?
       # Go makes its cache contents read-only to ensure cache integrity,
       # which makes sense but is something we need to undo for cleanup.
-      directory? && %w[go_cache].include?(basename.to_s)
+      directory? && %w[go_cache go_mod_cache].include?(basename.to_s)
     end
 
     def prune?(days)
@@ -123,8 +131,7 @@ module Homebrew
     PERIODIC_CLEAN_FILE = (HOMEBREW_CACHE/".cleaned").freeze
 
     attr_predicate :dry_run?, :scrub?
-    attr_reader :args, :days, :cache
-    attr_reader :disk_cleanup_size
+    attr_reader :args, :days, :cache, :disk_cleanup_size
 
     def initialize(*args, dry_run: false, scrub: false, days: nil, cache: HOMEBREW_CACHE)
       @disk_cleanup_size = 0
@@ -303,6 +310,7 @@ module Homebrew
     end
 
     def cleanup_path(path)
+      return unless path.exist?
       return unless @cleaned_up_paths.add?(path)
 
       disk_usage = path.disk_usage

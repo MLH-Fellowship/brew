@@ -14,15 +14,13 @@ module Homebrew
 
         Rerun the post-install steps for <formula>.
       EOS
-      switch :force
-      switch :verbose
-      switch :debug
+
       min_named :keg
     end
   end
 
   def postinstall
-    postinstall_args.parse
+    args = postinstall_args.parse
 
     args.resolved_formulae.each do |f|
       ohai "Postinstalling #{f}"

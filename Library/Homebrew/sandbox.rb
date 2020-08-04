@@ -47,12 +47,12 @@ class Sandbox
   end
 
   def allow_cvs
-    allow_write_path "/Users/#{ENV["USER"]}/.cvspass"
+    allow_write_path "#{Dir.home(ENV["USER"])}/.cvspass"
   end
 
   def allow_fossil
-    allow_write_path "/Users/#{ENV["USER"]}/.fossil"
-    allow_write_path "/Users/#{ENV["USER"]}/.fossil-journal"
+    allow_write_path "#{Dir.home(ENV["USER"])}/.fossil"
+    allow_write_path "#{Dir.home(ENV["USER"])}/.fossil-journal"
   end
 
   def allow_write_cellar(formula)
@@ -63,7 +63,7 @@ class Sandbox
 
   # Xcode projects expect access to certain cache/archive dirs.
   def allow_write_xcode
-    allow_write_path "/Users/#{ENV["USER"]}/Library/Developer"
+    allow_write_path "#{Dir.home(ENV["USER"])}/Library/Developer"
   end
 
   def allow_write_log(formula)

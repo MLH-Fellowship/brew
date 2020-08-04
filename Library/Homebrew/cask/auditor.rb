@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
-require "cask/download"
-
 module Cask
   class Auditor
-    include Checkable
     extend Predicable
 
     def self.audit(cask, audit_download: false, audit_appcast: false,
@@ -41,42 +38,48 @@ module Cask
                    :audit_strict?, :audit_new_cask?, :audit_token_conflicts?, :quarantine?
 
     def audit
+      warnings = Set.new
+      errors = Set.new
+
       if !Homebrew.args.value("language") && language_blocks
-        audit_all_languages
+        language_blocks.each_key do |l|
+          audit = audit_languages(l)
+          puts audit.summary
+          warnings += audit.warnings
+          errors += audit.errors
+        end
       else
-        audit_cask_instance(cask)
+        audit = audit_cask_instance(cask)
+        puts audit.summary
+        warnings += audit.warnings
+        errors += audit.errors
       end
+
+      { warnings: warnings, errors: errors }
     end
 
     private
 
-    def audit_all_languages
-      saved_languages = MacOS.instance_variable_get(:@languages)
-      begin
-        language_blocks.keys.all?(&method(:audit_languages))
-      ensure
-        MacOS.instance_variable_set(:@languages, saved_languages)
-      end
-    end
-
     def audit_languages(languages)
       ohai "Auditing language: #{languages.map { |lang| "'#{lang}'" }.to_sentence}"
-      MacOS.instance_variable_set(:@languages, languages)
-      audit_cask_instance(CaskLoader.load(cask.sourcefile_path))
+      localized_cask = CaskLoader.load(cask.sourcefile_path)
+      config = localized_cask.config
+      config.languages = languages
+      localized_cask.config = config
+      audit_cask_instance(localized_cask)
     end
 
     def audit_cask_instance(cask)
-      download = audit_download? && Download.new(cask, quarantine: quarantine?)
       audit = Audit.new(cask, appcast:         audit_appcast?,
                               online:          audit_online?,
                               strict:          audit_strict?,
                               new_cask:        audit_new_cask?,
                               token_conflicts: audit_token_conflicts?,
-                              download:        download,
+                              download:        audit_download?,
+                              quarantine:      quarantine?,
                               commit_range:    commit_range)
       audit.run!
-      puts audit.summary
-      audit.success?
+      audit
     end
 
     def language_blocks

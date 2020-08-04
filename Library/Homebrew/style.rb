@@ -16,7 +16,7 @@ module Homebrew
       check_style_impl(files, :json, **options)
     end
 
-    def check_style_impl(files, output_type, fix: false, except_cops: nil, only_cops: nil)
+    def check_style_impl(files, output_type, fix: false, except_cops: nil, only_cops: nil, display_cop_names: false)
       Homebrew.install_bundler_gems!
       require "rubocop"
       require "rubocops"
@@ -56,7 +56,7 @@ module Homebrew
         File.expand_path(file).start_with? HOMEBREW_LIBRARY_PATH
       end
 
-      if files && !has_non_formula
+      if files.present? && !has_non_formula
         config = if files.first && File.exist?("#{files.first}/spec")
           HOMEBREW_LIBRARY/".rubocop_rspec.yml"
         else
@@ -65,7 +65,7 @@ module Homebrew
         args << "--config" << config
       end
 
-      if files.nil?
+      if files.blank?
         args << HOMEBREW_LIBRARY_PATH
       else
         args += files
@@ -78,8 +78,8 @@ module Homebrew
       case output_type
       when :print
         args << "--debug" if Homebrew.args.debug?
-        args << "--display-cop-names" if Homebrew.args.display_cop_names?
-        args << "--format" << "simple" if files
+        args << "--display-cop-names" if display_cop_names
+        args << "--format" << "simple" if files.present?
         system(cache_env, "rubocop", *args)
         rubocop_success = $CHILD_STATUS.success?
       when :json
@@ -100,7 +100,7 @@ module Homebrew
         raise "Invalid output_type for check_style_impl: #{output_type}"
       end
 
-      return rubocop_success if files.present? || !has_non_formula
+      return rubocop_success if files.present?
 
       shellcheck   = which("shellcheck")
       shellcheck ||= which("shellcheck", ENV["HOMEBREW_PATH"])

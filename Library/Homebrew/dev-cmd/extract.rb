@@ -89,14 +89,15 @@ module Homebrew
       EOS
       flag   "--version=",
              description: "Extract the specified <version> of <formula> instead of the most recent."
-      switch :force
-      switch :debug
+      switch "-f", "--force",
+             description: "Overwrite the destination formula if it already exists."
+
       named 2
     end
   end
 
   def extract
-    extract_args.parse
+    args = extract_args.parse
 
     if args.named.first !~ HOMEBREW_TAP_FORMULA_REGEX
       name = args.named.first.downcase
@@ -191,7 +192,10 @@ module Homebrew
     # Remove any existing version suffixes, as a new one will be added later
     name.sub!(/\b@(.*)\z\b/i, "")
     versioned_name = Formulary.class_s("#{name}@#{version}")
-    result.gsub!("class #{class_name} < Formula", "class #{versioned_name} < Formula")
+    result.sub!("class #{class_name} < Formula", "class #{versioned_name} < Formula")
+
+    # Remove bottle blocks, they won't work.
+    result.sub!(/  bottle do.+?end\n\n/m, "") if destination_tap != source_tap
 
     path = destination_tap.path/"Formula/#{name}@#{version}.rb"
     if path.exist?
@@ -205,7 +209,8 @@ module Homebrew
       odebug "Overwriting existing formula at #{path}"
       path.delete
     end
-    ohai "Writing formula for #{name} from revision #{rev} to #{path}"
+    ohai "Writing formula for #{name} from revision #{rev} to:"
+    puts path
     path.write result
   end
 

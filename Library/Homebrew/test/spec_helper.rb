@@ -4,12 +4,10 @@ if ENV["HOMEBREW_TESTS_COVERAGE"]
   require "simplecov"
 
   formatters = [SimpleCov::Formatter::HTMLFormatter]
-  if ENV["HOMEBREW_COVERALLS_REPO_TOKEN"] && RUBY_PLATFORM[/darwin/]
-    require "coveralls"
+  if ENV["HOMEBREW_CODECOV_TOKEN"] && RUBY_PLATFORM[/darwin/]
+    require "codecov"
 
-    Coveralls::Output.no_color if !ENV["HOMEBREW_COLOR"] && (ENV["HOMEBREW_NO_COLOR"] || !$stdout.tty?)
-
-    formatters << Coveralls::SimpleCov::Formatter
+    formatters << SimpleCov::Formatter::Codecov
 
     if ENV["TEST_ENV_NUMBER"]
       SimpleCov.at_exit do
@@ -18,16 +16,7 @@ if ENV["HOMEBREW_TESTS_COVERAGE"]
       end
     end
 
-    ENV["CI_NAME"] = ENV["HOMEBREW_CI_NAME"]
-    ENV["COVERALLS_REPO_TOKEN"] = ENV["HOMEBREW_COVERALLS_REPO_TOKEN"]
-
-    ENV["CI_BUILD_NUMBER"] = ENV["HOMEBREW_CI_BUILD_NUMBER"]
-    ENV["CI_BRANCH"] = ENV["HOMEBREW_CI_BRANCH"]
-    %r{refs/pull/(?<pr>\d+)/merge} =~ ENV["HOMEBREW_CI_BUILD_NUMBER"]
-    ENV["CI_PULL_REQUEST"] = pr
-    ENV["CI_BUILD_URL"] = "https://github.com/#{ENV["HOMEBREW_GITHUB_REPOSITORY"]}/pull/#{pr}/checks"
-
-    ENV["CI_JOB_ID"] = ENV["TEST_ENV_NUMBER"] || "1"
+    ENV["CODECOV_TOKEN"] = ENV["HOMEBREW_CODECOV_TOKEN"]
   end
 
   SimpleCov.formatters = SimpleCov::Formatter::MultiFormatter.new(formatters)
@@ -40,6 +29,7 @@ require "rubocop"
 require "rubocop/rspec/support"
 require "find"
 require "byebug"
+require "timeout"
 
 $LOAD_PATH.push(File.expand_path("#{ENV["HOMEBREW_LIBRARY"]}/Homebrew/test/support/lib"))
 
@@ -174,6 +164,7 @@ RSpec.configure do |config|
       Keg.clear_cache
       Tab.clear_cache
       FormulaInstaller.clear_attempted
+      FormulaInstaller.clear_installed
 
       TEST_DIRECTORIES.each(&:mkpath)
 
@@ -191,7 +182,19 @@ RSpec.configure do |config|
         $stderr.reopen(File::NULL)
       end
 
-      example.run
+      begin
+        timeout = example.metadata.fetch(:timeout, 60)
+        inner_timeout = nil
+        Timeout.timeout(timeout) do
+          example.run
+        rescue Timeout::Error => e
+          inner_timeout = e
+        end
+      rescue Timeout::Error
+        raise "Example exceeded maximum runtime of #{timeout} seconds."
+      end
+
+      raise inner_timeout if inner_timeout
     rescue SystemExit => e
       raise "Unexpected exit with status #{e.status}."
     ensure

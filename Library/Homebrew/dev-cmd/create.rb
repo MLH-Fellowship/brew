@@ -4,6 +4,7 @@ require "formula"
 require "formula_creator"
 require "missing_formula"
 require "cli/parser"
+require "utils/pypi"
 
 module Homebrew
   module_function
@@ -17,7 +18,7 @@ module Homebrew
         Homebrew will attempt to automatically derive the formula name and version, but
         if it fails, you'll have to make your own template. The `wget` formula serves as
         a simple example. For the complete API, see:
-        <http://www.rubydoc.info/github/Homebrew/brew/master/Formula>
+        <https://rubydoc.brew.sh/Formula>
       EOS
       switch "--autotools",
              description: "Create a basic template for an Autotools-style build."
@@ -29,6 +30,8 @@ module Homebrew
              description: "Create a basic template for a Go build."
       switch "--meson",
              description: "Create a basic template for a Meson-style build."
+      switch "--node",
+             description: "Create a basic template for a Node build."
       switch "--perl",
              description: "Create a basic template for a Perl build."
       switch "--python",
@@ -51,17 +54,17 @@ module Homebrew
              description: "Explicitly set the <license> of the new formula."
       flag   "--tap=",
              description: "Generate the new formula within the given tap, specified as <user>`/`<repo>."
-      switch :force
-      switch :verbose
-      switch :debug
-      conflicts "--autotools", "--cmake", "--crystal", "--go", "--meson", "--perl", "--python", "--rust"
+      switch "-f", "--force",
+             description: "Ignore errors for disallowed formula names and named that shadow aliases."
+
+      conflicts "--autotools", "--cmake", "--crystal", "--go", "--meson", "--node", "--perl", "--python", "--rust"
       named 1
     end
   end
 
   # Create a formula from a tarball URL
   def create
-    create_args.parse
+    args = create_args.parse
 
     # Ensure that the cache exists so we can fetch the tarball
     HOMEBREW_CACHE.mkpath
@@ -73,7 +76,7 @@ module Homebrew
     license = args.set_license
     tap = args.tap
 
-    fc = FormulaCreator.new
+    fc = FormulaCreator.new(args)
     fc.name = name
     fc.version = version
     fc.license = license
@@ -92,6 +95,8 @@ module Homebrew
       :crystal
     elsif args.go?
       :go
+    elsif args.node?
+      :node
     elsif args.perl?
       :perl
     elsif args.python?
@@ -131,6 +136,8 @@ module Homebrew
     end
 
     fc.generate!
+
+    PyPI.update_python_resources! Formula[fc.name], ignore_non_pypi_packages: true if args.python?
 
     puts "Please run `brew audit --new-formula #{fc.name}` before submitting, thanks."
     exec_editor fc.path

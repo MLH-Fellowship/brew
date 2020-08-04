@@ -20,28 +20,22 @@ class SoftwareSpec
     cxx11:     Option.new("c++11",     "Build using C++11 mode"),
   }.freeze
 
-  attr_reader :name, :full_name, :owner
-  attr_reader :build, :resources, :patches, :options
-  attr_reader :deprecated_flags, :deprecated_options
-  attr_reader :dependency_collector
-  attr_reader :bottle_specification
-  attr_reader :compiler_failures
-  attr_reader :uses_from_macos_elements
+  attr_reader :name, :full_name, :owner, :build, :resources, :patches, :options, :deprecated_flags,
+              :deprecated_options, :dependency_collector, :bottle_specification, :compiler_failures,
+              :uses_from_macos_elements, :bottle_disable_reason
 
-  def_delegators :@resource, :stage, :fetch, :verify_download_integrity, :source_modified_time
-  def_delegators :@resource, :download_name, :cached_download, :clear_cache
-  def_delegators :@resource, :checksum, :mirrors, :specs, :using
-  def_delegators :@resource, :version, :mirror, *Checksum::TYPES
-  def_delegators :@resource, :downloader
+  def_delegators :@resource, :stage, :fetch, :verify_download_integrity, :source_modified_time, :download_name,
+                 :cached_download, :clear_cache, :checksum, :mirrors, :specs, :using, :version, :mirror,
+                 :downloader, *Checksum::TYPES
 
-  def initialize
+  def initialize(flags: [])
     @resource = Resource.new
     @resources = {}
     @dependency_collector = DependencyCollector.new
     @bottle_specification = BottleSpecification.new
     @patches = []
     @options = Options.new
-    @flags = Homebrew.args.flags_only
+    @flags = flags
     @deprecated_flags = []
     @deprecated_options = []
     @build = BuildOptions.new(Options.create(@flags), options)
@@ -87,15 +81,13 @@ class SoftwareSpec
     @bottle_disable_reason ? true : false
   end
 
-  attr_reader :bottle_disable_reason
-
   def bottle_defined?
     !bottle_specification.collector.keys.empty?
   end
 
   def bottled?
     bottle_specification.tag?(Utils::Bottles.tag) && \
-      (bottle_specification.compatible_cellar? || Homebrew.args.force_bottle?)
+      (bottle_specification.compatible_cellar? || owner.force_bottle)
   end
 
   def bottle(disable_type = nil, disable_reason = nil, &block)
@@ -242,7 +234,7 @@ class SoftwareSpec
 end
 
 class HeadSoftwareSpec < SoftwareSpec
-  def initialize
+  def initialize(flags: [])
     super
     @resource.version = Version.create("HEAD")
   end

@@ -2,6 +2,7 @@
 
 require "formula"
 require "cli/parser"
+require "utils/pypi"
 
 module Homebrew
   module_function
@@ -18,14 +19,16 @@ module Homebrew
         be made if either or both values are not supplied by the user.
 
         If a <tag> is specified, the Git commit <revision> corresponding to that tag
-        must also be specified.
+        should also be specified. A best effort to determine the <revision> will be made
+        if the value is not supplied by the user.
+
+        If a <version> is specified, a best effort to determine the <URL> and <SHA-256> or
+        the <tag> and <revision> will be made if both values are not supplied by the user.
 
         *Note:* this command cannot be used to transition a formula from a
         URL-and-SHA-256 style specification into a tag-and-revision style specification,
         nor vice versa. It must use whichever style specification the formula already uses.
       EOS
-      switch "--devel",
-             description: "Bump the development rather than stable version. The development spec must already exist."
       switch "-n", "--dry-run",
              description: "Print what would be done rather than doing it."
       switch "--write",
@@ -58,19 +61,18 @@ module Homebrew
       flag   "--tag=",
              description: "Specify the new git commit <tag> for the formula."
       flag   "--revision=",
-             required_for: "--tag=",
-             description:  "Specify the new git commit <revision> corresponding to the specified <tag>."
-      switch :force
-      switch :quiet
-      switch :verbose
-      switch :debug
+             depends_on:  "--tag=",
+             description: "Specify the new git commit <revision> corresponding to the specified <tag>."
+      switch "-f", "--force",
+             description: "Ignore duplicate open PRs. Remove all mirrors if --mirror= was not specified."
+
       conflicts "--no-audit", "--strict"
       conflicts "--url", "--tag"
       max_named 1
     end
   end
 
-  def use_correct_linux_tap(formula)
+  def use_correct_linux_tap(formula, args:)
     if OS.linux? && formula.tap.core_tap?
       tap_full_name = formula.tap.full_name.gsub("linuxbrew", "homebrew")
       homebrew_core_url = "https://github.com/#{tap_full_name}"
@@ -103,11 +105,14 @@ module Homebrew
         end
       end
     end
-    [formula.tap&.full_name, "origin/master", "-"]
+    origin_branch = Utils.popen_read("git", "-C", formula.tap.path.to_s, "symbolic-ref", "-q", "--short",
+                                     "refs/remotes/origin/HEAD").chomp.presence
+    origin_branch ||= "origin/master"
+    [formula.tap&.full_name, origin_branch, "-"]
   end
 
   def bump_formula_pr
-    bump_formula_pr_args.parse
+    args = bump_formula_pr_args.parse
 
     # As this command is simplifying user-run commands then let's just use a
     # user path, too.
@@ -119,41 +124,17 @@ module Homebrew
     formula = args.formulae.first
 
     new_url = args.url
-    if new_url && !formula
-      # Split the new URL on / and find any formulae that have the same URL
-      # except for the last component, but don't try to match any more than the
-      # first five components since sometimes the last component isn't the only
-      # one to change.
-      new_url_split = new_url.split("/")
-      maximum_url_components_to_match = 5
-      components_to_match = [new_url_split.count - 1, maximum_url_components_to_match].min
-      base_url = new_url_split.first(components_to_match).join("/")
-      base_url = /#{Regexp.escape(base_url)}/
-      is_devel = args.devel?
-      guesses = []
-      Formula.each do |f|
-        if is_devel && f.devel && f.devel.url && f.devel.url.match(base_url)
-          guesses << f
-        elsif f.stable&.url && f.stable.url.match(base_url)
-          guesses << f
-        end
-      end
-      if guesses.count == 1
-        formula = guesses.shift
-      elsif guesses.count > 1
-        odie "Couldn't guess formula for sure; could be one of these:\n#{guesses.map(&:name).join(", ")}"
-      end
-    end
+    formula ||= determine_formula_from_url(new_url) if new_url
     raise FormulaUnspecifiedError unless formula
 
-    tap_full_name, origin_branch, previous_branch = use_correct_linux_tap(formula)
+    tap_full_name, origin_branch, previous_branch = use_correct_linux_tap(formula, args: args)
+    check_open_pull_requests(formula, tap_full_name, args: args)
 
-    requested_spec, formula_spec = if args.devel?
-      devel_message = " (devel)"
-      [:devel, formula.devel]
-    else
-      [:stable, formula.stable]
-    end
+    new_version = args.version
+    check_all_pull_requests(formula, tap_full_name, version: new_version, args: args) if new_version
+
+    requested_spec = :stable
+    formula_spec = formula.stable
     odie "#{formula}: no #{requested_spec} specification found!" unless formula_spec
 
     hash_type, old_hash = if (checksum = formula_spec.checksum)
@@ -165,7 +146,7 @@ module Homebrew
     new_revision = args.revision
     new_mirrors ||= args.mirror
     new_mirror ||= case new_url
-    when requested_spec != :devel && %r{.*ftp.gnu.org/gnu.*}
+    when %r{.*ftp.gnu.org/gnu.*}
       new_url.sub "ftp.gnu.org/gnu", "ftpmirror.gnu.org"
     when %r{.*download.savannah.gnu.org/*}
       new_url.sub "download.savannah.gnu.org", "download-mirror.savannah.gnu.org"
@@ -175,28 +156,45 @@ module Homebrew
       new_url.sub "mirrors.ocf.berkeley.edu/debian", "mirrorservice.org/sites/ftp.debian.org/debian"
     end
     new_mirrors ||= [new_mirror] unless new_mirror.nil?
-    forced_version = args.version
+    old_url = formula_spec.url
+    old_tag = formula_spec.specs[:tag]
+    old_formula_version = formula_version(formula, requested_spec)
+    old_version = old_formula_version.to_s
+    forced_version = new_version.present?
     new_url_hash = if new_url && new_hash
+      check_all_pull_requests(formula, tap_full_name, url: new_url, args: args) unless new_version
       true
     elsif new_tag && new_revision
+      check_all_pull_requests(formula, tap_full_name, url: old_url, tag: new_tag, args: args) unless new_version
       false
     elsif !hash_type
-      odie "#{formula}: no --tag=/--revision= arguments specified!"
-    elsif !new_url
-      odie "#{formula}: no --url= argument specified!"
-    else
-      resource = Resource.new { @url = new_url }
-      resource.download_strategy = DownloadStrategyDetector.detect_from_url(new_url)
-      resource.owner = Resource.new(formula.name)
-      if forced_version
-        if forced_version == resource.version
-          forced_version = nil
-        else
-          resource.version = forced_version
-        end
+      odie "#{formula}: no --tag= or --version= argument specified!" if !new_tag && !new_version
+      new_tag ||= old_tag.gsub(old_version, new_version)
+      if new_tag == old_tag
+        odie <<~EOS
+          You need to bump this formula manually since the new tag
+          and old tag are both #{new_tag}.
+        EOS
       end
-      odie "No --version= argument specified!" unless resource.version
-      resource_path = resource.fetch
+      check_all_pull_requests(formula, tap_full_name, url: old_url, tag: new_tag, args: args) unless new_version
+      resource_path, forced_version = fetch_resource(formula, new_version, old_url, tag: new_tag)
+      new_revision = Utils.popen_read("git -C \"#{resource_path}\" rev-parse -q --verify HEAD")
+      new_revision = new_revision.strip
+      false
+    elsif !new_url && !new_version
+      odie "#{formula}: no --url= or --version= argument specified!"
+    else
+      new_url ||= PyPI.update_pypi_url(old_url, new_version)
+      new_url ||= old_url.gsub(old_version, new_version)
+      if new_url == old_url
+        odie <<~EOS
+          You need to bump this formula manually since the new URL
+          and old URL are both:
+            #{new_url}
+        EOS
+      end
+      check_all_pull_requests(formula, tap_full_name, url: new_url, args: args) unless new_version
+      resource_path, forced_version = fetch_resource(formula, new_version, new_url)
       tar_file_extensions = %w[.tar .tb2 .tbz .tbz2 .tgz .tlz .txz .tZ]
       if tar_file_extensions.any? { |extension| new_url.include? extension }
         gnu_tar_gtar_path = HOMEBREW_PREFIX/"opt/gnu-tar/bin/gtar"
@@ -211,8 +209,6 @@ module Homebrew
         new_hash = resource_path.sha256
       end
     end
-
-    old_formula_version = formula_version(formula, requested_spec)
 
     replacement_pairs = []
     if requested_spec == :stable && formula.revision.nonzero?
@@ -253,7 +249,8 @@ module Homebrew
       ]
     end
 
-    backup_file = File.read(formula.path) unless args.dry_run?
+    read_only_run = args.dry_run? && !args.write?
+    old_contents = File.read(formula.path) unless read_only_run
 
     if new_mirrors
       replacement_pairs << [
@@ -273,48 +270,37 @@ module Homebrew
       ]
     end
 
-    if forced_version && forced_version != "0"
-      if requested_spec == :stable
-        replacement_pairs << if File.read(formula.path).include?("version \"#{old_formula_version}\"")
-          [
-            old_formula_version.to_s,
-            forced_version,
-          ]
-        elsif new_mirrors
-          [
-            /^( +)(mirror "#{Regexp.escape(new_mirrors.last)}"\n)/m,
-            "\\1\\2\\1version \"#{forced_version}\"\n",
-          ]
-        else
-          [
-            /^( +)(url "#{Regexp.escape(new_url)}"\n)/m,
-            "\\1\\2\\1version \"#{forced_version}\"\n",
-          ]
-        end
-      elsif requested_spec == :devel
-        replacement_pairs << [
-          /(  devel do.+?version ")#{old_formula_version}("\n.+?end\n)/m,
-          "\\1#{forced_version}\\2",
+    if forced_version && new_version != "0"
+      replacement_pairs << if File.read(formula.path).include?("version \"#{old_formula_version}\"")
+        [
+          old_formula_version.to_s,
+          new_version,
+        ]
+      elsif new_mirrors
+        [
+          /^( +)(mirror "#{Regexp.escape(new_mirrors.last)}"\n)/m,
+          "\\1\\2\\1version \"#{new_version}\"\n",
+        ]
+      elsif new_url
+        [
+          /^( +)(url "#{Regexp.escape(new_url)}"\n)/m,
+          "\\1\\2\\1version \"#{new_version}\"\n",
+        ]
+      elsif new_revision
+        [
+          /^( {2})( +)(:revision => "#{new_revision}"\n)/m,
+          "\\1\\2\\3\\1version \"#{new_version}\"\n",
         ]
       end
-    elsif forced_version && forced_version == "0"
-      if requested_spec == :stable
-        replacement_pairs << [
-          /^  version "[\w.\-+]+"\n/m,
-          "",
-        ]
-      elsif requested_spec == :devel
-        replacement_pairs << [
-          /(  devel do.+?)^ +version "[^\n]+"\n(.+?end\n)/m,
-          "\\1\\2",
-        ]
-      end
+    elsif forced_version && new_version == "0"
+      replacement_pairs << [
+        /^  version "[\w.\-+]+"\n/m,
+        "",
+      ]
     end
-    new_contents = inreplace_pairs(formula.path, replacement_pairs)
+    new_contents = inreplace_pairs(formula.path, replacement_pairs.uniq.compact, args: args)
 
     new_formula_version = formula_version(formula, requested_spec, new_contents)
-
-    check_for_duplicate_pull_requests(formula, tap_full_name, new_formula_version.to_s)
 
     if !new_mirrors && !formula_spec.mirrors.empty?
       if args.force?
@@ -328,15 +314,15 @@ module Homebrew
     end
 
     if new_formula_version < old_formula_version
-      formula.path.atomic_write(backup_file) unless args.dry_run?
+      formula.path.atomic_write(old_contents) unless read_only_run
       odie <<~EOS
-        You probably need to bump this formula manually since changing the
+        You need to bump this formula manually since changing the
         version from #{old_formula_version} to #{new_formula_version} would be a downgrade.
       EOS
     elsif new_formula_version == old_formula_version
-      formula.path.atomic_write(backup_file) unless args.dry_run?
+      formula.path.atomic_write(old_contents) unless read_only_run
       odie <<~EOS
-        You probably need to bump this formula manually since the new version
+        You need to bump this formula manually since the new version
         and old version are both #{new_formula_version}.
       EOS
     end
@@ -347,10 +333,16 @@ module Homebrew
       alias_rename.map! { |a| formula.tap.alias_dir/a }
     end
 
-    run_audit(formula, alias_rename, backup_file)
+    ohai "brew update-python-resources #{formula.name}"
+    unless read_only_run
+      PyPI.update_python_resources! formula, new_formula_version, silent: true, ignore_non_pypi_packages: true
+    end
+
+    run_audit(formula, alias_rename, old_contents, args: args)
 
     formula.path.parent.cd do
-      branch = "#{formula.name}-#{new_formula_version}"
+      _, base_branch = origin_branch.split("/")
+      branch = "bump-#{formula.name}-#{new_formula_version}"
       git_dir = Utils.popen_read("git rev-parse --git-dir").chomp
       shallow = !git_dir.empty? && File.exist?("#{git_dir}/shallow")
       changed_files = [formula.path]
@@ -362,24 +354,24 @@ module Homebrew
         ohai "git add #{alias_rename.first} #{alias_rename.last}" if alias_rename.present?
         ohai "git checkout --no-track -b #{branch} #{origin_branch}"
         ohai "git commit --no-edit --verbose --message='#{formula.name} " \
-             "#{new_formula_version}#{devel_message}' -- #{changed_files.join(" ")}"
+             "#{new_formula_version}' -- #{changed_files.join(" ")}"
         ohai "git push --set-upstream $HUB_REMOTE #{branch}:#{branch}"
         ohai "git checkout --quiet #{previous_branch}"
-        ohai "create pull request with GitHub API"
+        ohai "create pull request with GitHub API (base branch: #{base_branch})"
       else
 
         if args.no_fork?
           remote_url = Utils.popen_read("git remote get-url --push origin").chomp
           username = formula.tap.user
         else
-          remote_url, username = forked_repo_info(formula, tap_full_name, backup_file)
+          remote_url, username = forked_repo_info(formula, tap_full_name, old_contents)
         end
 
         safe_system "git", "fetch", "--unshallow", "origin" if shallow
         safe_system "git", "add", *alias_rename if alias_rename.present?
         safe_system "git", "checkout", "--no-track", "-b", branch, origin_branch
         safe_system "git", "commit", "--no-edit", "--verbose",
-                    "--message=#{formula.name} #{new_formula_version}#{devel_message}",
+                    "--message=#{formula.name} #{new_formula_version}",
                     "--", *changed_files
         safe_system "git", "push", "--set-upstream", remote_url, "#{branch}:#{branch}"
         safe_system "git", "checkout", "--quiet", previous_branch
@@ -394,11 +386,11 @@ module Homebrew
             #{user_message}
           EOS
         end
-        pr_title = "#{formula.name} #{new_formula_version}#{devel_message}"
+        pr_title = "#{formula.name} #{new_formula_version}"
 
         begin
           url = GitHub.create_pull_request(tap_full_name, pr_title,
-                                           "#{username}:#{branch}", "master", pr_message)["html_url"]
+                                           "#{username}:#{branch}", base_branch, pr_message)["html_url"]
           if args.no_browse?
             puts url
           else
@@ -411,10 +403,40 @@ module Homebrew
     end
   end
 
-  def forked_repo_info(formula, tap_full_name, backup_file)
+  def determine_formula_from_url(url)
+    # Split the new URL on / and find any formulae that have the same URL
+    # except for the last component, but don't try to match any more than the
+    # first five components since sometimes the last component isn't the only
+    # one to change.
+    url_split = url.split("/")
+    maximum_url_components_to_match = 5
+    components_to_match = [url_split.count - 1, maximum_url_components_to_match].min
+    base_url = url_split.first(components_to_match).join("/")
+    base_url = /#{Regexp.escape(base_url)}/
+    guesses = []
+    Formula.each do |f|
+      guesses << f if f.stable&.url && f.stable.url.match(base_url)
+    end
+    return guesses.shift if guesses.count == 1
+    return if guesses.count <= 1
+
+    odie "Couldn't guess formula for sure; could be one of these:\n#{guesses.map(&:name).join(", ")}"
+  end
+
+  def fetch_resource(formula, new_version, url, **specs)
+    resource = Resource.new
+    resource.url(url, specs)
+    resource.owner = Resource.new(formula.name)
+    forced_version = new_version && new_version != resource.version
+    resource.version = new_version if forced_version
+    odie "No --version= argument specified!" unless resource.version
+    [resource.fetch, forced_version]
+  end
+
+  def forked_repo_info(formula, tap_full_name, old_contents)
     response = GitHub.create_fork(tap_full_name)
   rescue GitHub::AuthenticationFailedError, *GitHub.api_errors => e
-    formula.path.atomic_write(backup_file)
+    formula.path.atomic_write(old_contents)
     odie "Unable to fork: #{e.message}!"
   else
     # GitHub API responds immediately but fork takes a few seconds to be ready.
@@ -432,10 +454,11 @@ module Homebrew
     [remote_url, username]
   end
 
-  def inreplace_pairs(path, replacement_pairs)
-    if args.dry_run?
-      contents = path.open("r") { |f| Formulary.ensure_utf8_encoding(f).read }
-      contents.extend(StringInreplaceExtension)
+  def inreplace_pairs(path, replacement_pairs, args:)
+    read_only_run = args.dry_run? && !args.write?
+    if read_only_run
+      str = path.open("r") { |f| Formulary.ensure_utf8_encoding(f).read }
+      contents = StringInreplaceExtension.new(str)
       replacement_pairs.each do |old, new|
         ohai "replace #{old.inspect} with #{new.inspect}" unless args.quiet?
         raise "No old value for new value #{new}! Did you pass the wrong arguments?" unless old
@@ -444,8 +467,8 @@ module Homebrew
       end
       raise Utils::InreplaceError, path => contents.errors unless contents.errors.empty?
 
-      path.atomic_write(contents) if args.write?
-      contents
+      path.atomic_write(contents.inreplace_string) if args.write?
+      contents.inreplace_string
     else
       Utils::Inreplace.inreplace(path) do |s|
         replacement_pairs.each do |old, new|
@@ -479,12 +502,24 @@ module Homebrew
     []
   end
 
-  def check_for_duplicate_pull_requests(formula, tap_full_name, version)
+  def check_open_pull_requests(formula, tap_full_name, args:)
     # check for open requests
     pull_requests = fetch_pull_requests(formula.name, tap_full_name, state: "open")
+    check_for_duplicate_pull_requests(pull_requests, args: args)
+  end
 
+  def check_all_pull_requests(formula, tap_full_name, version: nil, url: nil, tag: nil, args:)
+    unless version
+      specs = {}
+      specs[:tag] = tag if tag
+      version = Version.detect(url, specs)
+    end
     # if we haven't already found open requests, try for an exact match across all requests
     pull_requests = fetch_pull_requests("#{formula.name} #{version}", tap_full_name) if pull_requests.blank?
+    check_for_duplicate_pull_requests(pull_requests, args: args)
+  end
+
+  def check_for_duplicate_pull_requests(pull_requests, args:)
     return if pull_requests.blank?
 
     duplicates_message = <<~EOS
@@ -516,7 +551,7 @@ module Homebrew
     [versioned_alias, "#{name}@#{new_alias_version}"]
   end
 
-  def run_audit(formula, alias_rename, backup_file)
+  def run_audit(formula, alias_rename, old_contents, args:)
     if args.dry_run?
       if args.no_audit?
         ohai "Skipping `brew audit`"
@@ -540,7 +575,7 @@ module Homebrew
     end
     return unless failed_audit
 
-    formula.path.atomic_write(backup_file)
+    formula.path.atomic_write(old_contents)
     FileUtils.mv alias_rename.last, alias_rename.first if alias_rename.present?
     odie "`brew audit` failed!"
   end
