@@ -250,6 +250,7 @@ module Homebrew
     match = f.stable.url.match regex
     match ||= f.devel&.url&.match regex
     match ||= f.head&.url&.match regex
+    match ||= f.homepage.match regex
     return unless match
     user = match[:user]
     repo = match[:repo].delete_suffix(".git")
