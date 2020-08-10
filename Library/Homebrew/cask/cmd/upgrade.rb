@@ -18,6 +18,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask upgrade", "brew upgrade"
+
         self.class.upgrade_casks(
           *casks,
           force:          force?,

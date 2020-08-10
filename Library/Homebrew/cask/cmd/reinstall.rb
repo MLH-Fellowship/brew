@@ -4,6 +4,8 @@ module Cask
   class Cmd
     class Reinstall < Install
       def run
+        odeprecated "brew cask reinstall", "brew reinstall"
+
         self.class.reinstall_casks(
           *casks,
           binaries:       binaries?,

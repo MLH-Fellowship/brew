@@ -18,6 +18,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask doctor", "brew doctor --verbose"
+
         success = true
 
         checks = Homebrew::Diagnostic::Checks.new true

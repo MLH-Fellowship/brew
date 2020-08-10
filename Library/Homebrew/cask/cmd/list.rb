@@ -31,6 +31,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask list", "brew list --cask"
+
         output = args.any? ? provided_list : Caskroom.casks
 
         if json?

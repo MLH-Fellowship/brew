@@ -4,6 +4,8 @@ module Cask
   class Cmd
     class Home < AbstractCommand
       def run
+        odeprecated "brew cask home", "brew home"
+
         if casks.none?
           odebug "Opening project homepage"
           self.class.open_url "https://brew.sh/"

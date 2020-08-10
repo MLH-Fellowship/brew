@@ -15,6 +15,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask --cache", "brew --cache"
+
         casks.each do |cask|
           puts self.class.cached_location(cask)
         end

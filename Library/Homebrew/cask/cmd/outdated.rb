@@ -17,6 +17,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask outdated", "brew outdated --cask"
+
         output = @outdated_casks.map { |cask| cask.outdated_info(greedy?, verbose?, json?) }
 
         puts json? ? JSON.generate(output) : output

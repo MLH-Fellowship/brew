@@ -11,6 +11,8 @@ module Cask
       end
 
       def run
+        odeprecated "brew cask uninstall", "brew uninstall"
+
         self.class.uninstall_casks(
           *casks,
           binaries: binaries?,
