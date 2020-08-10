@@ -148,7 +148,7 @@ module Homebrew
 
           downcased_unique_named.each do |name|
             kegs << resolve_keg(name)
-          rescue NoSuchKegError
+          rescue NoSuchKegError, FormulaUnavailableError
             begin
               casks << Cask::CaskLoader.load(name)
             rescue Cask::CaskUnavailableError
