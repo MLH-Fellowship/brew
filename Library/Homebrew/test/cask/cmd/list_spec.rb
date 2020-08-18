@@ -13,7 +13,7 @@ describe Cask::Cmd::List, :cask do
     end
 
     expect {
-      described_class.run
+      described_class.list_casks
     }.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
@@ -32,7 +32,7 @@ describe Cask::Cmd::List, :cask do
     end
 
     expect {
-      described_class.run("-1")
+      described_class.list_casks(one: true)
     }.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
@@ -52,7 +52,7 @@ describe Cask::Cmd::List, :cask do
     end
 
     expect {
-      described_class.run("--full-name")
+      described_class.list_casks(full_name: true)
     }.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
@@ -75,19 +75,21 @@ describe Cask::Cmd::List, :cask do
 
     it "of all installed Casks" do
       expect {
-        described_class.run("--versions")
+        described_class.list_casks(versions: true)
       }.to output(expected_output).to_stdout
     end
 
     it "of given Casks" do
+      casks = %w[local-caffeine local-transmission].map { |c| Cask::CaskLoader.load(c) }
+
       expect {
-        described_class.run("--versions", "local-caffeine", "local-transmission")
+        described_class.list_casks(*casks, versions: true)
       }.to output(expected_output).to_stdout
     end
   end
 
   describe "lists json" do
-    let(:casks) { ["local-caffeine", "local-transmission"] }
+    let(:casks) { %w[local-caffeine local-transmission].map { |c| Cask::CaskLoader.load(c) } }
     let(:expected_output) {
       <<~EOS
         [{"token":"local-caffeine","name":[],"desc":null,"homepage":"https://brew.sh/","url":"file:///usr/local/Homebrew/Library/Homebrew/test/support/fixtures/cask/caffeine.zip","appcast":null,"version":"1.2.3","sha256":"67cdb8a02803ef37fdbf7e0be205863172e41a561ca446cd84f0d7ab35a99d94","artifacts":[["Caffeine.app"]],"caveats":null,"depends_on":{},"conflicts_with":null,"container":null,"auto_updates":null},{"token":"local-transmission","name":["Transmission"],"desc":"BitTorrent client","homepage":"https://transmissionbt.com/","url":"file:///usr/local/Homebrew/Library/Homebrew/test/support/fixtures/cask/transmission-2.61.dmg","appcast":null,"version":"2.61","sha256":"e44ffa103fbf83f55c8d0b1bea309a43b2880798dae8620b1ee8da5e1095ec68","artifacts":[["Transmission.app"]],"caveats":null,"depends_on":{},"conflicts_with":null,"container":null,"auto_updates":null}]
@@ -95,18 +97,18 @@ describe Cask::Cmd::List, :cask do
     }
 
     before do
-      casks.map(&Cask::CaskLoader.method(:load)).each(&InstallHelper.method(:install_with_caskfile))
+      casks.each(&InstallHelper.method(:install_with_caskfile))
     end
 
     it "of all installed Casks" do
       expect {
-        described_class.run("--json")
+        described_class.list_casks(json: true)
       }.to output(expected_output).to_stdout
     end
 
     it "of given Casks" do
       expect {
-        described_class.run("--json", "local-caffeine", "local-transmission")
+        described_class.list_casks(*casks, json: true)
       }.to output(expected_output).to_stdout
     end
   end
@@ -124,7 +126,7 @@ describe Cask::Cmd::List, :cask do
       end
 
       expect {
-        described_class.run("local-transmission", "local-caffeine")
+        described_class.list_casks(transmission, caffeine)
       }.to output(<<~EOS).to_stdout
         ==> App
         #{transmission.config.appdir.join("Transmission.app")} (#{transmission.config.appdir.join("Transmission.app").abv})
