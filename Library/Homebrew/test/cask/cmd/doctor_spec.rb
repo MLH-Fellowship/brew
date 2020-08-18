@@ -7,7 +7,7 @@ describe Cask::Cmd::Doctor, :cask do
 
   it "displays some nice info about the environment" do
     expect {
-      described_class.run
+      described_class.run_cask_checks
     }.to output(/^==> Homebrew Version/).to_stdout
   end
 

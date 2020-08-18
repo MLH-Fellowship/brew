@@ -15,6 +15,13 @@ module Cask
       end
 
       def run
+        # TODO: enable for next major/minor release
+        odeprecated "brew cask doctor", "brew doctor --verbose"
+
+        self.class.run_cask_checks
+      end
+
+      def self.run_cask_checks
         success = true
 
         checks = Homebrew::Diagnostic::Checks.new true
