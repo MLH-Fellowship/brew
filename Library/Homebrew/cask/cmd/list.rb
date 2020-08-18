@@ -23,6 +23,9 @@ module Cask
       end
 
       def run
+        # TODO: enable for next major/minor release
+        odeprecated "brew cask list", "brew list --cask"
+
         self.class.list_casks(
           *casks,
           json:      args.json?,
